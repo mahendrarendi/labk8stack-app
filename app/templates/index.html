@@ -16,12 +16,25 @@
   {% if error %}<p class="alert">{{ error }}</p>{% endif %}
 
   <form method="post" action="/join" class="join">
-    <label for="name">Your name</label>
+    <label for="name">Username</label>
     <div class="row">
-      <input id="name" name="name" type="text" placeholder="e.g. rendi" maxlength="40" required autofocus>
-      <button class="btn primary" type="submit">Enter lab</button>
+      <input id="name" name="name" type="text" value="{{ name_value or '' }}"
+             placeholder="e.g. rendi" maxlength="40" autocomplete="username" required autofocus>
     </div>
-    <p class="hint">No password — just a name for the leaderboard.</p>
+    <label for="password" style="margin-top: 12px">Password</label>
+    <div class="row">
+      <input id="password" name="password" type="password"
+             placeholder="at least 6 characters" minlength="6" maxlength="128"
+             autocomplete="current-password" required>
+    </div>
+    <div class="row" style="margin-top: 14px">
+      <button class="btn primary" type="submit" name="intent" value="login">Sign in</button>
+      <button class="btn" type="submit" name="intent" value="register">Create account</button>
+    </div>
+    <p class="hint">
+      Sign in with the same username to keep your score on the leaderboard.
+      First time here? Choose <em>Create account</em>.
+    </p>
   </form>
 </section>
 

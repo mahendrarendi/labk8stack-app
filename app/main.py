@@ -17,7 +17,13 @@ from .config import BASE_DIR, settings
 from .engine import get_engine
 from .manifests import safety_error
 from .scoring import compute_score, seconds_left
-from .security import COOKIE_NAME, read_user_id, sign_user
+from .security import (
+    COOKIE_NAME,
+    hash_password,
+    read_user_id,
+    sign_user,
+    verify_password,
+)
 
 
 @asynccontextmanager
@@ -93,11 +99,77 @@ def index(request: Request):
 
 
 @app.post("/join")
-def join(request: Request, name: str = Form(...)):
+def join(
+    request: Request,
+    name: str = Form(...),
+    password: str = Form(...),
+    intent: str = Form("login"),
+):
     clean = " ".join(name.split())
     if not (2 <= len(clean) <= 40):
-        return render(request, "index.html", error="Name must be 2-40 characters.")
-    user = db.get_or_create_user(clean)
+        return render(
+            request,
+            "index.html",
+            error="Username must be 2-40 characters.",
+            name_value=clean,
+        )
+    if not (6 <= len(password) <= 128):
+        return render(
+            request,
+            "index.html",
+            error="Password must be 6-128 characters.",
+            name_value=clean,
+        )
+
+    user = db.get_user_by_name(clean)
+
+    if intent == "register":
+        if user is not None and user["password_hash"]:
+            return render(
+                request,
+                "index.html",
+                error="That username is already taken. Sign in instead.",
+                name_value=clean,
+            )
+        if user is None:
+            user = db.create_user(clean, hash_password(password))
+            if user is None:
+                return render(
+                    request,
+                    "index.html",
+                    error="That username was just taken. Pick another one.",
+                    name_value=clean,
+                )
+        else:
+            # Akun lama (dibuat sebelum password wajib) diklaim sekali di sini.
+            db.set_password(user["id"], hash_password(password))
+            user = db.get_user(user["id"])
+    else:
+        if user is None:
+            return render(
+                request,
+                "index.html",
+                error="No account with that username. Use Create account first.",
+                name_value=clean,
+            )
+        if not user["password_hash"]:
+            return render(
+                request,
+                "index.html",
+                error=(
+                    "This account has no password yet. "
+                    "Use Create account to set one."
+                ),
+                name_value=clean,
+            )
+        if not verify_password(password, user["password_hash"]):
+            return render(
+                request,
+                "index.html",
+                error="Incorrect password for that username.",
+                name_value=clean,
+            )
+
     response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(
         COOKIE_NAME,

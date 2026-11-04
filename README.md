@@ -21,7 +21,8 @@ buka web → isi nama → pilih challenge
 
 ## Fitur (MVP)
 
-- Login **nama saja** (cookie bertanda tangan, tanpa password)
+- Login **username + password** (cookie bertanda tangan); username yang sama
+  mempertahankan skor di leaderboard
 - **UI berbahasa Inggris**
 - **10 challenge** nyata dengan validator masing-masing
 - **Dua cara menyelesaikan**, bisa dicampur karena berbagi satu sandbox:
@@ -55,7 +56,7 @@ cluster-admin tanpa impersonation di produksi.
 
 ```bash
 make setup      # buat .venv + install dependensi
-make test       # 29 test
+make test       # 33 test
 make run        # http://localhost:8080
 ```
 
@@ -76,6 +77,19 @@ open http://localhost:8080
 ```
 
 SQLite disimpan di volume `platform-data`, jadi skor tidak hilang saat restart.
+
+## Akun & leaderboard
+
+- **Create account**: username + password (minimal 6 karakter) membuat akun baru.
+- **Sign in**: username yang sama + password memulihkan akun, attempt, dan skor
+  yang sudah ada di leaderboard. Username tidak membedakan huruf besar/kecil.
+- Password disimpan sebagai hash **PBKDF2-HMAC-SHA256** (600.000 iterasi, salt
+  acak per user), bukan teks biasa.
+- Tidak ada reset password lewat email. Bila password hilang, hapus user lewat
+  SQLite atau minta admin membuatkan akun baru.
+- User lama dari versi "nama saja" tidak punya password. Pemiliknya bisa
+  memakai **Create account** dengan username yang sama untuk mengklaim akun
+  itu satu kali.
 
 ## Mode engine
 
@@ -145,7 +159,7 @@ app/
 └── static/          # CSS + JS (tanpa framework)
 deploy/rbac.yaml     # ServiceAccount + ClusterRole untuk mode cluster
 docs/real-cluster.md # panduan connect ke cluster asli
-tests/               # pytest (29 test)
+tests/               # pytest (33 test)
 ```
 
 ## Terminal
@@ -184,11 +198,14 @@ daftar aman ditolak.
 
 ## Keamanan & batasan
 
-- Login hanya nama: **tidak ada autentikasi kuat**, cocok untuk lab internal.
+- Autentikasi memakai username + password (hash PBKDF2), tapi belum ada
+  verifikasi email, reset password, atau rate limiting login. Cocok untuk lab
+  internal.
 - Cookie ditandatangani `SECRET_KEY`; ganti nilai default sebelum dipakai publik.
-- Mode `kubernetes` memberi platform izin ke cluster. Isolasi per user baru
-  sebatas namespace — belum ada NetworkPolicy/RBAC ketat.
-- Terminal mode `fake` lengkap; mode `kubernetes` memakai kubectl asli (belum diuji).
+  Jalankan di belakang HTTPS agar password tidak dikirim dalam teks biasa.
+- Mode `kubernetes` memberi platform izin ke cluster. Isolasi per user ditegakkan
+  RBAC + impersonation per namespace (lihat `docs/real-cluster.md`).
+- Terminal mode `fake` lengkap; mode `kubernetes` memakai kubectl asli.
 - Leaderboard memakai SQLite; untuk multi-replica perlu Postgres.
 
 ## Roadmap

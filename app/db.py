@@ -11,9 +11,10 @@ from .config import settings
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL COLLATE NOCASE UNIQUE,
-    created_at TEXT NOT NULL
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    password_hash TEXT,
+    created_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS attempts (
@@ -65,18 +66,49 @@ def get_db() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with get_db() as db:
         db.executescript(SCHEMA)
+        # Database lama dibuat sebelum login memakai password. Tambahkan kolom
+        # tanpa menghapus user/attempt yang sudah ada.
+        columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "password_hash" not in columns:
+            db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
 
 
 # ---------------------------------------------------------------- users
 
-def get_or_create_user(name: str) -> sqlite3.Row:
-    clean = " ".join(name.split())[:40]
+def normalize_name(name: str) -> str:
+    return " ".join(name.split())[:40]
+
+
+def get_user_by_name(name: str) -> sqlite3.Row | None:
+    with get_db() as db:
+        return db.execute(
+            "SELECT * FROM users WHERE name = ?", (normalize_name(name),)
+        ).fetchone()
+
+
+def create_user(name: str, password_hash: str) -> sqlite3.Row | None:
+    """Return the new row, or None when the username is already taken."""
+    try:
+        with get_db() as db:
+            db.execute(
+                "INSERT INTO users(name, password_hash, created_at) VALUES(?, ?, ?)",
+                (normalize_name(name), password_hash, iso(utcnow())),
+            )
+            return db.execute(
+                "SELECT * FROM users WHERE name = ?", (normalize_name(name),)
+            ).fetchone()
+    except sqlite3.IntegrityError:
+        return None
+
+
+def set_password(user_id: int, password_hash: str) -> None:
     with get_db() as db:
         db.execute(
-            "INSERT INTO users(name, created_at) VALUES(?, ?) ON CONFLICT(name) DO NOTHING",
-            (clean, iso(utcnow())),
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id),
         )
-        return db.execute("SELECT * FROM users WHERE name = ?", (clean,)).fetchone()
 
 
 def get_user(user_id: int) -> sqlite3.Row | None:

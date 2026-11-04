@@ -27,17 +27,38 @@ def client():
         yield test_client
 
 
-def join(client: TestClient, name: str | None = None) -> str:
+PASSWORD = "correct-horse-42"
+
+
+def join(
+    client: TestClient,
+    name: str | None = None,
+    password: str = PASSWORD,
+    intent: str = "register",
+) -> str:
     name = name or f"user-{uuid.uuid4().hex[:8]}"
-    response = client.post("/join", data={"name": name}, follow_redirects=False)
+    response = client.post(
+        "/join",
+        data={"name": name, "password": password, "intent": intent},
+        follow_redirects=False,
+    )
     assert response.status_code == 303
     return name
+
+
+def login(client: TestClient, name: str, password: str = PASSWORD):
+    return client.post(
+        "/join",
+        data={"name": name, "password": password, "intent": "login"},
+        follow_redirects=False,
+    )
 
 
 def test_landing_page(client):
     page = client.get("/")
     assert page.status_code == 200
-    assert "Enter lab" in page.text
+    assert "Sign in" in page.text
+    assert "Create account" in page.text
 
 
 def test_dashboard_requires_login(client):
@@ -54,6 +75,48 @@ def test_join_then_dashboard(client):
     # ketiga challenge tampil
     for challenge in CHALLENGES.values():
         assert challenge.title in page.text
+
+
+def test_duplicate_registration_is_rejected(client):
+    name = join(client)
+    response = client.post(
+        "/join",
+        data={"name": name, "password": PASSWORD, "intent": "register"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 200
+    assert "already taken" in response.text
+
+
+def test_wrong_password_is_rejected(client):
+    name = join(client)
+    response = login(client, name, password="not-the-password")
+    assert response.status_code == 200
+    assert "Incorrect password" in response.text
+
+
+def test_login_for_unknown_user_is_rejected(client):
+    response = login(client, "does-not-exist-9f3a", password="whatever-123")
+    assert response.status_code == 200
+    assert "No account with that username" in response.text
+
+
+def test_sign_in_again_keeps_leaderboard_score(client):
+    name = join(client)
+    client.get("/challenge/image-pull-backoff")
+    fixed = IMAGE_BROKEN.replace("0.0.3", "0.1.0")
+    assert client.post(
+        "/api/challenge/image-pull-backoff/verify", json={"yaml": fixed}
+    ).json()["passed"] is True
+
+    client.post("/logout", follow_redirects=False)
+    response = login(client, name)
+    assert response.status_code == 303
+
+    dashboard = client.get("/dashboard")
+    assert name in dashboard.text
+    board = client.get("/leaderboard")
+    assert name in board.text
 
 
 def test_apply_broken_image_shows_pull_error(client):
