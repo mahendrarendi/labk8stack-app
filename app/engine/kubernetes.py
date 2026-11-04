@@ -19,6 +19,7 @@ import json
 import os
 import shlex
 import subprocess
+import time
 from shutil import which
 
 from ..challenges import Challenge
@@ -38,6 +39,29 @@ IDENTITY_FLAGS = {
     "--client-certificate", "--client-key", "--insecure-skip-tls-verify",
 }
 SHELL_TOKENS = (";", "|", "&", "`", "$(", ">", "<")
+
+# ServiceAccount + RoleBinding created inside every lab namespace. Using
+# `kubectl apply` keeps it idempotent, so a retry no longer depends on the
+# namespace being recreated.
+_PROVISIONING = """apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {service_account}
+  namespace: {namespace}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lab-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {cluster_role}
+subjects:
+  - kind: ServiceAccount
+    name: {service_account}
+    namespace: {namespace}
+"""
 
 
 class KubernetesEngine(Engine):
@@ -85,42 +109,101 @@ class KubernetesEngine(Engine):
         output = (proc.stdout or "") + (proc.stderr or "")
         return ApplyResult(ok=proc.returncode == 0, output=output.strip())
 
-    def _ensure_namespace(self, namespace: str) -> None:
-        self._run(["kubectl", "create", "namespace", namespace])
+    def _namespace_phase(self, namespace: str) -> str | None:
+        result = self._run(["kubectl", "get", "namespace", namespace, "-o", "json"])
+        if not result.ok:
+            return None
+        try:
+            document = json.loads(result.output)
+        except json.JSONDecodeError:
+            return None
+        return (document.get("status") or {}).get("phase")
+
+    def _ensure_namespace(self, namespace: str) -> ApplyResult | None:
+        """Create the namespace and its runner identity if they are missing."""
+        phase = self._namespace_phase(namespace)
+        if phase == "Terminating":
+            # A deleted namespace cannot be reused. Wait for the controller to
+            # finish instead of applying into a dying namespace.
+            for _ in range(60):
+                time.sleep(2)
+                if self._namespace_phase(namespace) is None:
+                    break
+            else:
+                return ApplyResult(
+                    ok=False,
+                    output=(
+                        f"namespace {namespace} is still terminating; "
+                        "wait a moment and reload the challenge."
+                    ),
+                )
+            phase = None
+
+        if phase is None:
+            created = self._run(["kubectl", "create", "namespace", namespace])
+            if not created.ok and "AlreadyExists" not in created.output:
+                return created
+
         self._run([
             "kubectl", "label", "namespace", namespace,
             "app.kubernetes.io/part-of=k8s-lab",
             "k8s-lab.io/component=sandbox", "--overwrite",
         ])
         if not settings.impersonate:
-            return
-        self._run([
-            "kubectl", "create", "serviceaccount",
-            settings.runner_service_account, "-n", namespace,
-        ])
-        self._run([
-            "kubectl", "create", "rolebinding", "lab-runner",
-            f"--clusterrole={settings.runner_cluster_role}",
-            f"--serviceaccount={namespace}:{settings.runner_service_account}",
-            "-n", namespace,
-        ])
+            return None
 
-    def _wipe_namespace(self, namespace: str) -> None:
-        """Delete and recreate so every attempt starts from a clean slate."""
+        provisioning = _PROVISIONING.format(
+            service_account=settings.runner_service_account,
+            cluster_role=settings.runner_cluster_role,
+            namespace=namespace,
+        )
+        applied = self._run(
+            ["kubectl", "apply", "-f", "-", "-n", namespace],
+            stdin=provisioning,
+            timeout=30,
+        )
+        return None if applied.ok else applied
+
+    def _clean(self, namespace: str) -> None:
+        """Remove challenge resources but keep the namespace and its identity.
+
+        Deleting and recreating the namespace is slow and, on some clusters,
+        leaves it stuck in Terminating. Wiping the objects inside it has the
+        same effect for the learner and is much more predictable.
+        """
         self._run(
             [
-                "kubectl", "delete", "namespace", namespace,
-                "--ignore-not-found", "--wait=true", "--timeout=45s",
+                "kubectl", "delete",
+                "deployments,statefulsets,daemonsets,jobs,cronjobs,"
+                "services,configmaps,secrets,ingresses,networkpolicies,"
+                "persistentvolumeclaims,horizontalpodautoscalers",
+                "--all", "-n", namespace, "--ignore-not-found",
+                "--wait=true", "--timeout=30s",
             ],
-            timeout=60,
+            impersonate=True,
+            namespace=namespace,
+            timeout=45,
+        )
+        # Pods removed by their controller can still be terminating.
+        self._run(
+            [
+                "kubectl", "delete", "pods", "--all",
+                "-n", namespace, "--ignore-not-found", "--wait=false",
+            ],
+            impersonate=True,
+            namespace=namespace,
+            timeout=30,
         )
 
     # ------------------------------------------------------------- engine
 
     def reset(self, user_id: int, challenge: Challenge) -> ApplyResult:
         namespace = self._namespace(user_id, challenge)
-        self._wipe_namespace(namespace)
-        self._ensure_namespace(namespace)
+        provisioned = self._ensure_namespace(namespace)
+        if provisioned is not None:
+            return provisioned
+
+        self._clean(namespace)
 
         if challenge.setup_yaml.strip():
             setup = self._run(
@@ -132,17 +215,12 @@ class KubernetesEngine(Engine):
             if not setup.ok:
                 return setup
 
-        applied = self._run(
+        return self._run(
             ["kubectl", "apply", "-f", "-", "-n", namespace],
             stdin=challenge.broken_yaml,
             impersonate=True,
             namespace=namespace,
         )
-        if not applied.ok:
-            return applied
-
-        document = _parse(challenge.broken_yaml)
-        return self.apply(user_id, challenge, document) if document else applied
 
     def apply(self, user_id: int, challenge: Challenge, document: dict) -> ApplyResult:
         import yaml
@@ -214,10 +292,3 @@ class KubernetesEngine(Engine):
             args, impersonate=True, namespace=namespace
         )
         return result.output or "(no output)"
-
-
-def _parse(text: str) -> dict | None:
-    import yaml
-
-    document = yaml.safe_load(text)
-    return document if isinstance(document, dict) else None

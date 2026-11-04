@@ -92,11 +92,34 @@ LAB_APP_GOOD_TAGS=0.1.0,v0.1.0,latest
 `LAB_APP_GOOD_TAGS` adalah daftar tag yang dianggap valid oleh challenge
 `image-pull-backoff`.
 
-> Tanpa image sendiri, 8 dari 10 challenge masih bisa diuji dengan image HTTP
-> publik, misalnya `ghcr.io/nginx/nginx-unprivileged:1.30.6-alpine` +
-> `LAB_APP_GOOD_TAGS=1.30.6-alpine,latest`. Namun challenge `readiness-probe`
-> dan `port-env` butuh aplikasi yang benar-benar menyajikan `/healthz` dan
-> membaca env `PORT`.
+### Menguji tanpa image sendiri
+
+Sebelum image `k8s-lab-app` tersedia, mode cluster masih bisa dipakai dengan
+image HTTP generik. Yang diuji di sini: `registry.k8s.io/echoserver:1.10`
+(listen di `:8080`, semua path termasuk `/healthz` membalas 200):
+
+```bash
+LAB_APP_IMAGE=registry.k8s.io/echoserver:1.10 \
+LAB_APP_GOOD_TAGS=1.10,latest
+```
+
+| Challenge | Gejala terlihat di cluster? | Catatan |
+|---|---|---|
+| `image-pull-backoff` | ✅ `ErrImagePull` | tag `0.0.3` tidak ada di repo image |
+| `service-no-endpoints` | ✅ Service tanpa endpoint | |
+| `pending-resources` | ✅ pod `Pending` | request CPU/memory melebihi node |
+| `command-override` | ✅ `RunContainerError` | |
+| `oom-killed` | ❌ | echoserver tidak memakai 32Mi; pod tetap `Running` |
+| `readiness-probe` | ❌ | echoserver membalas 200 untuk path apa pun, jadi probe `/health` tetap lolos |
+| `port-env` | ❌ | echoserver mengabaikan env `PORT` |
+| `service-target-port` | ✅ endpoint di `:8081` | |
+| `deployment-selector` | ✅ apply ditolak API server | |
+| `deployment-paused` | ✅ tidak ada pod | |
+
+Validator tetap memeriksa spec, jadi tiga challenge yang gejalanya tidak
+muncul **masih bisa "lulus"** bila diperbaiki dengan benar. Tetapi untuk demo
+yang jujur, pakai image `k8s-lab-app` asli: aplikasi itu membaca `PORT`,
+menyajikan `/healthz`, dan cukup berat untuk benar-benar OOM di 32Mi.
 
 ## 4. Jalankan platform
 
@@ -140,7 +163,20 @@ kubectl auth can-i get pods -n default --as=system:serviceaccount:lab-u<id>-<slu
 kubectl auth can-i get secrets -n kube-system --as=system:serviceaccount:lab-u<id>-<slug>:lab-runner # no
 ```
 
-## 6. Bersihkan
+## 6. Retry dan reset
+
+Setiap attempt baru ("Retry" atau attempt pertama untuk sebuah challenge)
+menghapus **resource di dalam** namespace, bukan namespace-nya. Namespace,
+ServiceAccount `lab-runner`, dan RoleBinding tetap ada, jadi reset selesai
+dalam hitungan detik. Ini juga menghindari namespace yang tertahan di
+`Terminating` (di cluster uji, penghapusan namespace butuh beberapa menit
+karena controller-manager mengejar cache yang tertinggal).
+
+Kalau sebuah namespace sudah terlanjur `Terminating`, platform menunggu
+maksimal ~2 menit sebelum memberi pesan error; resource lain (challenge lain)
+tetap berjalan normal karena namespace-nya terpisah.
+
+## 7. Bersihkan
 
 ```bash
 # resource user
@@ -194,6 +230,7 @@ kubectl label namespace lab-u<id>-<slug> \
 | `forbidden: cannot impersonate resource` | ClusterRole `lab-provisioner` belum di-bind ke identitas platform |
 | `forbidden` saat membuat RoleBinding | provisioner tidak punya `bind` pada ClusterRole `lab-user` |
 | `ImagePullBackOff` di semua challenge | `LAB_APP_IMAGE` masih placeholder atau node tidak bisa akses registry |
-| `namespace is being terminated` saat reset | penghapusan namespace butuh waktu; tunggu lalu ulangi |
+| `namespace is being terminated` | jarang terjadi; platform menunggu namespace selesai dihapus sebelum dipakai lagi |
+| Reset terasa lama | namespace baru sedang dibuat; setelah attempt pertama, reset hanya menghapus resource (cepat) |
 | `LAB_MODE=kubernetes but the 'kubectl' binary is missing` | install `kubectl` di image/container platform |
 | Pod ditolak dengan pesan PodSecurity | namespace butuh label PSA yang lebih longgar |
