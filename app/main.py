@@ -15,6 +15,7 @@ from . import db
 from .challenges import CHALLENGES, NODE_CPU, NODE_MEMORY_MIB, get_challenge
 from .config import BASE_DIR, settings
 from .engine import get_engine
+from .manifests import safety_error
 from .scoring import compute_score, seconds_left
 from .security import COOKIE_NAME, read_user_id, sign_user
 
@@ -76,6 +77,9 @@ def parse_document(text: str) -> tuple[dict | None, str | None]:
         return None, "YAML must be a single Kubernetes resource object."
     if "kind" not in document:
         return None, "The resource must have a 'kind' field."
+    problem = safety_error(document)
+    if problem:
+        return None, problem
     return document, None
 
 
@@ -154,6 +158,9 @@ def challenge_page(request: Request, slug: str):
         if latest and latest["status"] == "passed":
             passed_attempt = latest
         elif latest is None or latest["status"] == "expired":
+            # A new attempt always starts from a clean sandbox. In kubernetes
+            # mode this namespace has to be created before the page loads.
+            get_engine().reset(user["id"], challenge)
             attempt = db.start_attempt(user["id"], slug)
         else:
             attempt = latest

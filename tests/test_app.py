@@ -366,3 +366,76 @@ def test_pending_terminal_still_works(client):
     assert client.post(
         "/api/challenge/pending-resources/verify", json={"source": "terminal"}
     ).json()["passed"] is True
+
+
+# ------------------------------------------------------- manifest safety
+
+HOSTPATH_MANIFEST = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: nginx
+          volumeMounts:
+            - name: host
+              mountPath: /host
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+"""
+
+
+def test_manifest_with_hostpath_is_rejected(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    response = client.post(
+        "/api/challenge/image-pull-backoff/apply",
+        json={"yaml": HOSTPATH_MANIFEST},
+    )
+    assert response.status_code == 400
+    assert "hostPath" in response.json()["output"]
+
+
+def test_manifest_with_privileged_is_rejected(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    privileged = HOSTPATH_MANIFEST.replace(
+        "          volumeMounts:\n            - name: host\n              mountPath: /host\n",
+        "          securityContext:\n            privileged: true\n",
+    ).replace(
+        "      volumes:\n        - name: host\n          hostPath:\n            path: /\n",
+        "",
+    )
+    response = client.post(
+        "/api/challenge/image-pull-backoff/apply",
+        json={"yaml": privileged},
+    )
+    assert response.status_code == 400
+    assert "privileged" in response.json()["output"]
+
+
+def test_manifest_with_disallowed_kind_is_rejected(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    response = client.post(
+        "/api/challenge/image-pull-backoff/apply",
+        json={
+            "yaml": (
+                "apiVersion: v1\nkind: Pod\nmetadata:\n  name: sneaky\n"
+                "spec:\n  containers:\n    - name: c\n      image: nginx\n"
+            )
+        },
+    )
+    assert response.status_code == 400
+    assert "not allowed" in response.json()["output"]

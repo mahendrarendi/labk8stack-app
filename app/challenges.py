@@ -14,13 +14,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from .config import settings
+
 # "Node" capacity used by the simulator (and recommended in the lab cluster).
 NODE_CPU = 2.0
 NODE_MEMORY_MIB = 4096
 
-APP_IMAGE = "ghcr.io/change-me-owner/k8s-lab-app:0.1.0"
-BAD_TAG_IMAGE = "ghcr.io/change-me-owner/k8s-lab-app:0.0.3"
-GOOD_IMAGE_TAGS = {"0.1.0", "v0.1.0", "latest"}
+
+def _split_image(image: str) -> tuple[str, str]:
+    """Return (repository, tag) for an image reference."""
+    last = image.rsplit("/", 1)[-1]
+    if ":" not in last:
+        return image, "latest"
+    repository, tag = image.rsplit(":", 1)
+    return repository, tag
+
+
+APP_IMAGE = settings.app_image
+APP_REPOSITORY, APP_TAG = _split_image(APP_IMAGE)
+# The "broken" image keeps the same repository but an unpublished tag.
+BAD_TAG_IMAGE = f"{APP_REPOSITORY}:0.0.3"
+GOOD_IMAGE_TAGS = {
+    tag.strip() for tag in settings.app_good_tags.split(",") if tag.strip()
+} | {"0.1.0", "v0.1.0", "latest"}
 MIN_MEMORY_MIB = 128
 READY_PATH = "/healthz"
 APP_PORT = 8080
@@ -984,8 +1000,7 @@ CHALLENGES: dict[str, Challenge] = {
         ),
         hint=(
             "'kubectl describe pod <name>' shows the scheduler's reasoning in "
-            "the Events section. Compare that with what the node can offer: "
-            "'kubectl describe node'."
+            "the Events section, including the capacity it compared against."
         ),
         broken_yaml=PENDING_BROKEN,
         setup_yaml="",
@@ -1057,8 +1072,8 @@ CHALLENGES: dict[str, Challenge] = {
         ),
         hint=(
             "'kubectl describe pod <name>' shows how the previous run ended. "
-            "Check the container resources against the node capacity with "
-            "'kubectl describe node'."
+            "Compare the container resources with what the application needs "
+            "while it boots."
         ),
         broken_yaml=OOM_BROKEN,
         setup_yaml="",

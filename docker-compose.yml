@@ -8,10 +8,19 @@ services:
     environment:
       SECRET_KEY: ${SECRET_KEY:-dev-insecure-change-me}
       LAB_MODE: ${LAB_MODE:-fake}
+      LAB_KUBECONFIG: ${LAB_KUBECONFIG:-}
+      LAB_IMPERSONATE: ${LAB_IMPERSONATE:-true}
+      LAB_RUNNER_SA: ${LAB_RUNNER_SA:-lab-runner}
+      LAB_RUNNER_CLUSTERROLE: ${LAB_RUNNER_CLUSTERROLE:-lab-user}
+      LAB_APP_IMAGE: ${LAB_APP_IMAGE:-ghcr.io/change-me-owner/k8s-lab-app:0.1.0}
+      LAB_APP_GOOD_TAGS: ${LAB_APP_GOOD_TAGS:-0.1.0,v0.1.0,latest}
       DB_PATH: /data/lab.db
       LEADERBOARD_DAYS: ${LEADERBOARD_DAYS:-7}
     volumes:
       - platform-data:/data
+      # Untuk mode kubernetes di luar cluster, mount kubeconfig read-only:
+      # - ${HOME}/.kube/config:/kube/config:ro
+      # lalu set LAB_KUBECONFIG=/kube/config
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status==200 else 1)"]

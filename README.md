@@ -29,13 +29,33 @@ buka web → isi nama → pilih challenge
   - **Terminal** — imperative: `kubectl get/describe/logs`, `set image`, `set env`, `set resources`, `scale`, `rollout status|resume|pause`, `delete pod`, `create deployment`
 - Timer per attempt, skor menurun seiring waktu & percobaan
 - Leaderboard **rolling 7 hari**
-- Dua mode engine: `fake` (simulator) dan `kubernetes` (kubectl asli)
+- Dua mode engine: `fake` (simulator) dan `kubernetes` (kubectl asli per namespace)
+
+## Mode cluster asli (`LAB_MODE=kubernetes`)
+
+Panduan lengkap: [`docs/real-cluster.md`](docs/real-cluster.md).
+
+Singkatnya:
+
+```bash
+kubectl apply -f deploy/rbac.yaml          # SA + ClusterRole
+LAB_MODE=kubernetes \
+LAB_KUBECONFIG=$HOME/.kube/config \
+LAB_APP_IMAGE=ghcr.io/<owner>/k8s-lab-app:0.1.0 \
+.venv/bin/uvicorn app.main:app --port 8080
+```
+
+Setiap user mendapat namespace `lab-u<id>-<slug>`, ServiceAccount `lab-runner`, dan
+RoleBinding ke ClusterRole `lab-user`. Semua perintah dijalankan dengan
+`kubectl --as=system:serviceaccount:lab-u<id>-<slug>:lab-runner`, jadi RBAC cluster
+yang menegakkan isolasi — bukan kode aplikasi. Jangan pakai kubeconfig
+cluster-admin tanpa impersonation di produksi.
 
 ## Menjalankan di lokal
 
 ```bash
 make setup      # buat .venv + install dependensi
-make test       # 26 test
+make test       # 29 test
 make run        # http://localhost:8080
 ```
 
@@ -64,7 +84,7 @@ SQLite disimpan di volume `platform-data`, jadi skor tidak hilang saat restart.
 | `fake` (default) | Output `kubectl` disimulasikan dari isi YAML | Tidak |
 | `kubernetes` | Menjalankan `kubectl apply` di namespace user | Ya |
 
-Di mode `kubernetes`, setiap user mendapat namespace **`lab-u<id>`**. Platform
+Di mode `kubernetes`, setiap user mendapat namespace **`lab-u<id>-<slug>`**. Platform
 membuat namespace itu, menerapkan manifest rusak, lalu memverifikasi hasilnya.
 Artinya ServiceAccount platform butuh izin membuat namespace dan resource di
 dalamnya — **jangan pakai cluster produksi**.
@@ -120,10 +140,12 @@ app/
 ├── security.py      # cookie sesi
 ├── engine/
 │   ├── fake.py      # simulator
-│   └── kubernetes.py# kubectl asli per namespace
+│   └── kubernetes.py# kubectl asli per namespace + impersonation
 ├── templates/       # halaman server-rendered (English UI)
 └── static/          # CSS + JS (tanpa framework)
-tests/               # pytest (26 test)
+deploy/rbac.yaml     # ServiceAccount + ClusterRole untuk mode cluster
+docs/real-cluster.md # panduan connect ke cluster asli
+tests/               # pytest (29 test)
 ```
 
 ## Terminal
@@ -136,8 +158,10 @@ kubectl get pods|deploy|svc|ep
 kubectl describe pod|deployment|service <name>
 kubectl logs <pod>
 kubectl set image deployment/web <container>=<image>
+kubectl set env deployment/web <KEY>=<value>
+kubectl set resources deployment/web --limits=cpu=500m,memory=256Mi
 kubectl scale deployment/web --replicas=<n>
-kubectl rollout status deployment/web
+kubectl rollout status|resume|pause deployment/web
 kubectl delete pod <name>        # pod dibuat ulang oleh Deployment
 kubectl create deployment <name> --image=<image>
 help
