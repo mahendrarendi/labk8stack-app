@@ -74,7 +74,7 @@ def test_verify_passes_after_fix_and_scores(client):
     name = join(client)
     client.get("/challenge/image-pull-backoff")
 
-    fixed = IMAGE_BROKEN.replace("0.0.0-not-found", "0.1.0")
+    fixed = IMAGE_BROKEN.replace("0.0.3", "0.1.0")
     response = client.post(
         "/api/challenge/image-pull-backoff/verify",
         json={"yaml": fixed},

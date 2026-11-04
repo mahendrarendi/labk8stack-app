@@ -80,7 +80,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: ghcr.io/change-me-owner/k8s-lab-app:0.0.0-not-found
+          image: ghcr.io/change-me-owner/k8s-lab-app:0.0.3
           ports:
             - containerPort: 8080
 """
@@ -101,10 +101,12 @@ def validate_image(doc: dict) -> tuple[bool, str]:
     except (KeyError, IndexError, TypeError):
         return False, "Invalid Deployment: no containers found."
     image = str(container.get("image", ""))
-    tag = _image_tag(image)
-    if tag in GOOD_IMAGE_TAGS:
-        return True, f"Image '{image}' can be pulled. The Deployment is ready."
-    return False, f"Tag '{tag}' does not exist in the registry. Pod is still ImagePullBackOff."
+    if _image_tag(image) in GOOD_IMAGE_TAGS:
+        return True, f"The pod is ready and running with image '{image}'."
+    return False, (
+        "The Deployment is still not healthy: its pod never becomes ready. "
+        "Inspect the pod and its events."
+    )
 
 
 def simulate_image(doc: dict) -> list[str]:
@@ -176,10 +178,10 @@ def validate_service(doc: dict) -> tuple[bool, str]:
         return False, "The resource must be a Service."
     selector = (doc.get("spec") or {}).get("selector") or {}
     if selector.get("app") == "web":
-        return True, "Selector matches the pod labels, Endpoints are populated."
+        return True, "The Service now reaches the application pods behind it."
     return False, (
-        "Service selector does not match the pod labels (app: web). "
-        "Endpoints stay empty, so requests return 503."
+        "Requests through the Service would still fail: no pod is receiving "
+        "traffic. Compare the Service with the pods and check the endpoints."
     )
 
 
@@ -197,8 +199,6 @@ def simulate_service(doc: dict) -> list[str]:
         "",
         "NAME   ENDPOINTS   AGE",
         "web    <none>      2s",
-        "",
-        "Warning: selector 'app=web-v2' matches no pod (pods are labeled app=web)",
     ]
 
 
@@ -246,10 +246,10 @@ def validate_pending(doc: dict) -> tuple[bool, str]:
     except (KeyError, IndexError, TypeError, ValueError):
         return False, "resources.requests is missing or malformed."
     if cpu <= NODE_CPU and memory <= NODE_MEMORY_MIB:
-        return True, f"Requests of {cpu:g} CPU / {memory:g}Mi fit the node. Pod is scheduled."
+        return True, "The pod is scheduled and running on a node."
     return False, (
-        f"Requests of {cpu:g} CPU / {memory:g}Mi exceed node capacity "
-        f"({NODE_CPU:g} CPU / {NODE_MEMORY_MIB}Mi). Pod stays Pending."
+        "The pod is still Pending and has not been scheduled. Check the pod "
+        "events and the node's available capacity."
     )
 
 
@@ -282,23 +282,26 @@ def simulate_pending(doc: dict) -> list[str]:
 CHALLENGES: dict[str, Challenge] = {
     "image-pull-backoff": Challenge(
         slug="image-pull-backoff",
-        title="ImagePullBackOff",
+        title="Deployment never becomes ready",
         difficulty="Easy",
         points=100,
         duration_seconds=600,
-        summary="Pods never start because the image cannot be pulled.",
+        summary=(
+            "A Deployment was rolled out a few minutes ago. The pod never "
+            "reaches a ready state."
+        ),
         story=(
-            "Your team just shipped a new deployment, but the pod is stuck in "
-            "ImagePullBackOff. There are no container logs at all because the "
-            "container was never created."
+            "Your team shipped a new Deployment and handed you the manifests. "
+            "Since the rollout, the application has been unreachable and the "
+            "pod is not ready. Nobody has changed anything else in the cluster."
         ),
         objective=(
-            "Fix the image tag on Deployment 'web' so the image can be pulled "
-            "and the pod reaches Running."
+            "Get Deployment 'web' into a healthy state: its pod must become "
+            "ready and running."
         ),
         hint=(
-            "Look at the image field. Tag 0.0.0-not-found is intentionally "
-            "absent from the registry. Use tag 0.1.0."
+            "Start with 'kubectl get pods', then 'kubectl describe pod <name>'. "
+            "Read the Events section at the bottom of the description."
         ),
         broken_yaml=IMAGE_BROKEN,
         setup_yaml="",
@@ -309,20 +312,27 @@ CHALLENGES: dict[str, Challenge] = {
     ),
     "service-no-endpoints": Challenge(
         slug="service-no-endpoints",
-        title="Service 503 / No Endpoints",
+        title="Service returns 503",
         difficulty="Medium",
         points=120,
         duration_seconds=600,
-        summary="Pods are healthy, but the Service has no Endpoints.",
-        story=(
-            "Two pods are running fine, yet every request through the Service "
-            "returns 503. There is nothing in the application logs because "
-            "requests never reach a pod."
+        summary=(
+            "Every request through the Service returns 503, even though the "
+            "application pods appear to be up."
         ),
-        objective="Fix the Service selector so it matches the pod labels.",
+        story=(
+            "The application is deployed and the pods look healthy, but "
+            "clients calling the Service always get a 503. The application "
+            "logs show no errors and no incoming requests."
+        ),
+        objective=(
+            "Make the Service actually serve traffic to the running "
+            "application."
+        ),
         hint=(
-            "Compare spec.selector on the Service with the pod labels "
-            "(app: web). Empty Endpoints mean the selector matches nothing."
+            "Compare what the Service expects with what the pods actually "
+            "provide: 'kubectl get pods --show-labels', "
+            "'kubectl describe service web', and 'kubectl get endpoints'."
         ),
         broken_yaml=SERVICE_BROKEN,
         setup_yaml=SERVICE_SETUP,
@@ -333,21 +343,26 @@ CHALLENGES: dict[str, Challenge] = {
     ),
     "pending-resources": Challenge(
         slug="pending-resources",
-        title="Pod Pending",
+        title="Pod never schedules",
         difficulty="Medium",
         points=150,
         duration_seconds=600,
-        summary="The pod is not scheduled because requests are too large.",
+        summary=(
+            "A pod stays Pending forever: it exists, but it never runs on a node."
+        ),
         story=(
-            "The Deployment never becomes Running. Events show "
-            "FailedScheduling: Insufficient cpu and Insufficient memory."
+            "A Deployment was applied and its pod was created, but the pod "
+            "never leaves Pending. The application itself has never started, "
+            "so there are no logs to inspect."
         ),
         objective=(
-            "Lower the resource requests so they fit the node "
-            f"({NODE_CPU:g} CPU, {NODE_MEMORY_MIB}Mi)."
+            "Get the pod scheduled onto a node and running with the "
+            "application available."
         ),
         hint=(
-            "requests.cpu 8 and memory 16Gi are far too large. Try 100m and 128Mi."
+            "'kubectl describe pod <name>' shows the scheduler's reasoning in "
+            "the Events section. Compare that with what the node can offer: "
+            "'kubectl describe node'."
         ),
         broken_yaml=PENDING_BROKEN,
         setup_yaml="",

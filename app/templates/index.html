@@ -6,10 +6,11 @@
   <p class="eyebrow">hands-on platform</p>
   <h1>The cluster is broken.<br>Your job is to fix it.</h1>
   <p class="lead">
-    Every challenge hands you a manifest that is deliberately wrong —
-    <code>ImagePullBackOff</code>, a Service with no Endpoints, a <code>Pending</code> pod.
-    Fix it with the YAML editor or with imperative <code>kubectl</code> commands
-    in the built-in terminal, before the clock runs out.
+    Every challenge hands you a deliberately broken manifest. A Deployment
+    that never becomes ready, a Service that answers 503, a pod that never
+    leaves Pending. Nobody tells you why — investigate with the YAML editor or
+    with imperative <code>kubectl</code> commands in the built-in terminal,
+    before the clock runs out.
   </p>
 
   {% if error %}<p class="alert">{{ error }}</p>{% endif %}

@@ -74,11 +74,15 @@ dalamnya — **jangan pakai cluster produksi**.
 
 ## Challenge
 
-| Slug | Gejala | Yang diperbaiki | Poin |
+| Slug | Gejala yang ditampilkan ke user | Penyebab (spoiler — jangan tampil di UI) | Poin |
 |---|---|---|---|
-| `image-pull-backoff` | `ImagePullBackOff` | Tag image salah | 100 |
-| `service-no-endpoints` | 503 / `<none>` | `selector` Service | 120 |
-| `pending-resources` | Pod `Pending` | `resources.requests` | 150 |
+| `image-pull-backoff` | Pod tidak pernah ready | Tag image salah | 100 |
+| `service-no-endpoints` | Service selalu 503 | `selector` Service | 120 |
+| `pending-resources` | Pod tetap `Pending` | `resources.requests` | 150 |
+
+UI hanya menampilkan gejala. Jangan pernah menambahkan penyebab, nama field yang
+salah, atau nilai pengganti ke `summary` / `story` / `objective` / `hint`,
+karena itu menghilangkan bagian troubleshoot dari latihan.
 
 Menambah challenge = menambah satu entri di `app/challenges.py`: manifest rusak,
 fungsi `validate(doc)`, dan `simulate(doc)` untuk mode fake.
