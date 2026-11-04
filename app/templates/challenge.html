@@ -9,77 +9,100 @@
 
   <div class="pagehead">
     <div>
-      <p class="eyebrow"><a href="/dashboard">← semua challenge</a></p>
+      <p class="eyebrow"><a href="/dashboard">← all challenges</a></p>
       <h1>{{ challenge.title }}</h1>
       <div class="card-top">
         <span class="pill diff-{{ challenge.difficulty|lower }}">{{ challenge.difficulty }}</span>
-        <span class="pill">{{ challenge.points }} poin</span>
-        <span class="pill">{{ challenge.duration_seconds // 60 }} menit</span>
+        <span class="pill">{{ challenge.points }} pts</span>
+        <span class="pill">{{ challenge.duration_seconds // 60 }} min</span>
       </div>
     </div>
     {% if attempt and attempt.status == 'active' %}
       <div class="timer" id="timer" aria-live="polite">--:--</div>
     {% elif passed_attempt %}
-      <div class="timer done">LULUS</div>
+      <div class="timer done">SOLVED</div>
     {% else %}
-      <div class="timer expired">HABIS</div>
+      <div class="timer expired">EXPIRED</div>
     {% endif %}
   </div>
 
   {% if passed_attempt %}
     <div class="banner success">
-      <strong>Challenge selesai.</strong> Skor kamu {{ passed_attempt['score'] }} poin.
+      <strong>Challenge solved.</strong> You scored {{ passed_attempt['score'] }} points.
       <form method="post" action="/challenge/{{ challenge.slug }}/retry" class="inline">
-        <button class="btn ghost" type="submit">Coba lagi</button>
+        <button class="btn ghost" type="submit">Try again</button>
       </form>
     </div>
   {% endif %}
 
   {% if attempt and attempt.status == 'expired' %}
     <div class="banner danger">
-      <strong>Waktu habis.</strong> Skor attempt ini 0.
+      <strong>Time is up.</strong> This attempt scored 0.
       <form method="post" action="/challenge/{{ challenge.slug }}/retry" class="inline">
-        <button class="btn ghost" type="submit">Mulai attempt baru</button>
+        <button class="btn ghost" type="submit">Start a new attempt</button>
       </form>
     </div>
   {% endif %}
 
   <div class="split">
     <aside class="panel story">
-      <h2>Situasi</h2>
+      <h2>Situation</h2>
       <p>{{ challenge.story }}</p>
 
-      <h3>Tujuan</h3>
+      <h3>Objective</h3>
       <p>{{ challenge.objective }}</p>
 
       <details class="hint">
-        <summary>Butuh hint?</summary>
+        <summary>Need a hint?</summary>
         <p>{{ challenge.hint }}</p>
       </details>
 
-      <h3>Alur</h3>
+      <h3>How it works</h3>
       <ol class="steps">
-        <li>Perbaiki YAML di editor.</li>
-        <li>Klik <strong>Apply</strong> untuk melihat status pod.</li>
-        <li>Klik <strong>Verifikasi</strong> bila sudah yakin.</li>
+        <li>Fix the YAML in the editor <em>or</em> type <code>kubectl</code> commands in the terminal.</li>
+        <li>Inspect the result — pod status, endpoints, events.</li>
+        <li>Hit <strong>Verify</strong> when you think it is fixed.</li>
       </ol>
+      <p class="hint">Both tools share one sandbox, so you can mix them.</p>
     </aside>
 
-    <section class="panel editor-panel">
-      <div class="editor-head">
-        <span>manifest.yaml</span>
-        <span class="muted">editor</span>
-      </div>
-      <textarea id="editor" spellcheck="false" {% if passed_attempt %}readonly{% endif %}>{{ editor_value }}</textarea>
-
-      <div class="actions">
-        <button class="btn primary" id="btn-apply" type="button">Apply</button>
-        <button class="btn" id="btn-verify" type="button">Verifikasi</button>
-        <button class="btn ghost" id="btn-reset" type="button">Reset sandbox</button>
+    <section class="panel workbench">
+      <div class="tabs" role="tablist">
+        <button class="tab is-active" data-tab="editor" type="button">Manifest editor</button>
+        <button class="tab" data-tab="terminal" type="button">Terminal</button>
       </div>
 
-      <div class="console-head">output</div>
-      <pre id="console" class="console">$ siap. klik Apply untuk mengirim manifest.</pre>
+      <div class="pane is-active" id="pane-editor" data-pane="editor">
+        <div class="editor-head">
+          <span>manifest.yaml</span>
+          <span class="muted">yaml</span>
+        </div>
+        <textarea id="editor" spellcheck="false" {% if passed_attempt %}readonly{% endif %}>{{ editor_value }}</textarea>
+
+        <div class="actions">
+          <button class="btn primary" id="btn-apply" type="button" {% if passed_attempt %}disabled{% endif %}>Apply</button>
+          <button class="btn" id="btn-verify" type="button" {% if passed_attempt %}disabled{% endif %}>Verify</button>
+          <button class="btn ghost" id="btn-reset" type="button" {% if passed_attempt %}disabled{% endif %}>Reset sandbox</button>
+        </div>
+
+        <div class="console-head">output</div>
+        <pre id="console" class="console">$ ready. Click Apply to submit the manifest.</pre>
+      </div>
+
+      <div class="pane" id="pane-terminal" data-pane="terminal">
+        <pre id="term-out" class="console term-out">K8s Lab terminal — simulated kubectl.
+Type 'help' for the command list, or try: kubectl get pods</pre>
+        <form id="term-form" class="term-line" autocomplete="off">
+          <span class="prompt">$</span>
+          <input id="term-input" type="text" spellcheck="false"
+                 placeholder="kubectl get pods"
+                 {% if passed_attempt %}disabled{% endif %}>
+        </form>
+        <div class="actions">
+          <button class="btn" id="btn-term-verify" type="button" {% if passed_attempt %}disabled{% endif %}>Verify</button>
+          <button class="btn ghost" id="btn-term-reset" type="button" {% if passed_attempt %}disabled{% endif %}>Reset sandbox</button>
+        </div>
+      </div>
     </section>
   </div>
 </div>

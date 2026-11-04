@@ -202,3 +202,41 @@ h1 { font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; margin: 0 0 14px; le
 
 .muted { color: var(--muted); }
 .center { text-align: center; }
+
+/* ---------- workbench: editor + terminal tabs ---------- */
+.workbench { padding: 0; overflow: hidden; }
+
+.tabs {
+  display: flex; gap: 4px; padding: 8px 10px;
+  background: #0d1626; border-bottom: 1px solid var(--line);
+}
+.tab {
+  background: transparent; border: 1px solid transparent; color: var(--muted);
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.tab:hover { color: var(--text); }
+.tab.is-active { background: #16233a; border-color: var(--line); color: var(--accent); }
+
+.pane { display: none; }
+.pane.is-active { display: block; }
+
+.term-out {
+  min-height: 320px; max-height: 420px; border-top: 0;
+  border-bottom: 1px solid var(--line);
+}
+.term-line {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px; background: #060c16;
+  border-bottom: 1px solid var(--line);
+}
+.term-line .prompt {
+  color: var(--accent-2); font-family: ui-monospace, monospace; font-weight: 700;
+}
+.term-line input {
+  flex: 1; background: transparent; border: 0; outline: none;
+  color: #dbe7f5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; padding: 2px 0;
+}
+.term-line input::placeholder { color: #55657d; }
+.term-line input:disabled { opacity: .5; }

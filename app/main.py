@@ -1,4 +1,4 @@
-"""Platform lab Kubernetes: belajar dengan memperbaiki cluster yang rusak."""
+"""K8s Lab platform: learn by fixing a broken cluster."""
 
 from __future__ import annotations
 
@@ -32,6 +32,11 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 
 class SubmitBody(BaseModel):
     yaml: str = ""
+    source: str = "editor"  # editor | terminal
+
+
+class CommandBody(BaseModel):
+    command: str = ""
 
 
 @app.middleware("http")
@@ -66,11 +71,11 @@ def parse_document(text: str) -> tuple[dict | None, str | None]:
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        return None, f"YAML tidak valid: {exc}"
+        return None, f"Invalid YAML: {exc}"
     if not isinstance(document, dict):
-        return None, "YAML harus berupa satu object resource Kubernetes."
+        return None, "YAML must be a single Kubernetes resource object."
     if "kind" not in document:
-        return None, "Resource harus punya field 'kind'."
+        return None, "The resource must have a 'kind' field."
     return document, None
 
 
@@ -87,9 +92,7 @@ def index(request: Request):
 def join(request: Request, name: str = Form(...)):
     clean = " ".join(name.split())
     if not (2 <= len(clean) <= 40):
-        return render(
-            request, "index.html", error="Nama harus 2-40 karakter."
-        )
+        return render(request, "index.html", error="Name must be 2-40 characters.")
     user = db.get_or_create_user(clean)
     response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(
@@ -121,14 +124,14 @@ def dashboard(request: Request):
     for challenge in CHALLENGES.values():
         attempt = attempts.get(challenge.slug)
         if attempt is None:
-            state, label = "todo", "Belum dicoba"
+            state, label = "todo", "Not started"
         elif attempt["status"] == "passed":
-            state, label = "passed", f"Lulus · {attempt['score']} poin"
+            state, label = "passed", f"Solved · {attempt['score']} pts"
         elif attempt["status"] == "active":
             left = seconds_left(attempt["started_at"], challenge.duration_seconds)
-            state, label = "active", f"Sedang dikerjakan · {left // 60}:{left % 60:02d}"
+            state, label = "active", f"In progress · {left // 60}:{left % 60:02d}"
         else:
-            state, label = "expired", "Waktu habis"
+            state, label = "expired", "Time is up"
         cards.append({"challenge": challenge, "state": state, "label": label})
 
     return render(request, "dashboard.html", cards=cards)
@@ -178,6 +181,7 @@ def retry(request: Request, slug: str):
         return RedirectResponse("/", status_code=303)
     challenge = get_challenge(slug)
     if challenge:
+        get_engine().reset(user["id"], challenge)
         db.start_attempt(user["id"], slug)
     return RedirectResponse(f"/challenge/{slug}", status_code=303)
 
@@ -185,11 +189,7 @@ def retry(request: Request, slug: str):
 @app.get("/leaderboard")
 def leaderboard(request: Request):
     rows = db.leaderboard(settings.leaderboard_days)
-    return render(
-        request,
-        "leaderboard.html",
-        rows=rows,
-    )
+    return render(request, "leaderboard.html", rows=rows)
 
 
 @app.get("/healthz")
@@ -202,7 +202,9 @@ def healthz():
 def _guard(request: Request):
     user = current_user(request)
     if not user:
-        return None, JSONResponse({"ok": False, "output": "Sesi habis. Muat ulang halaman."}, status_code=401)
+        return None, JSONResponse(
+            {"ok": False, "output": "Session expired. Reload the page."}, status_code=401
+        )
     return user, None
 
 
@@ -213,15 +215,31 @@ def api_apply(request: Request, slug: str, body: SubmitBody):
         return error
     challenge = get_challenge(slug)
     if challenge is None:
-        return JSONResponse({"ok": False, "output": "Challenge tidak ditemukan."}, status_code=404)
+        return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
 
     document, parse_error = parse_document(body.yaml)
     if parse_error:
         return JSONResponse({"ok": False, "output": f"error: {parse_error}"}, status_code=400)
 
-    engine = get_engine()
-    result = engine.apply(user["id"], challenge, document)
+    result = get_engine().apply(user["id"], challenge, document)
     return JSONResponse({"ok": result.ok, "output": result.output})
+
+
+@app.post("/api/challenge/{slug}/terminal")
+def api_terminal(request: Request, slug: str, body: CommandBody):
+    user, error = _guard(request)
+    if error:
+        return error
+    challenge = get_challenge(slug)
+    if challenge is None:
+        return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
+
+    command = body.command.strip()
+    if len(command) > 400:
+        return JSONResponse({"output": "error: command too long."}, status_code=200)
+
+    output = get_engine().terminal(user["id"], challenge, command)
+    return JSONResponse({"output": output})
 
 
 @app.post("/api/challenge/{slug}/verify")
@@ -231,18 +249,38 @@ def api_verify(request: Request, slug: str, body: SubmitBody):
         return error
     challenge = get_challenge(slug)
     if challenge is None:
-        return JSONResponse({"ok": False, "output": "Challenge tidak ditemukan."}, status_code=404)
+        return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
 
-    document, parse_error = parse_document(body.yaml)
-    if parse_error:
-        return JSONResponse(
-            {"passed": False, "message": f"error: {parse_error}"}, status_code=400
-        )
+    engine = get_engine()
+
+    if body.source == "terminal":
+        document = engine.current(user["id"], challenge)
+        if document is None:
+            return JSONResponse(
+                {
+                    "passed": False,
+                    "message": "The sandbox has no resource to check. Use the terminal or editor first.",
+                },
+                status_code=409,
+            )
+    else:
+        document, parse_error = parse_document(body.yaml)
+        if parse_error:
+            return JSONResponse(
+                {"passed": False, "message": f"error: {parse_error}"}, status_code=400
+            )
+        # The editor behaves like `kubectl apply`: state changes before checking.
+        applied = engine.apply(user["id"], challenge, document)
+        if not applied.ok:
+            return JSONResponse(
+                {"passed": False, "message": applied.output}, status_code=200
+            )
+        document = engine.current(user["id"], challenge) or document
 
     attempt = db.active_attempt(user["id"], slug)
     if attempt is None:
         return JSONResponse(
-            {"passed": False, "message": "Tidak ada attempt aktif. Muat ulang halaman."},
+            {"passed": False, "message": "No active attempt. Reload the page."},
             status_code=409,
         )
 
@@ -250,7 +288,11 @@ def api_verify(request: Request, slug: str, body: SubmitBody):
     if remaining <= 0:
         db.finish_attempt(attempt["id"], "expired", 0)
         return JSONResponse(
-            {"passed": False, "expired": True, "message": "Waktu habis. Skor 0 untuk attempt ini."},
+            {
+                "passed": False,
+                "expired": True,
+                "message": "Time is up. This attempt scores 0.",
+            },
             status_code=200,
         )
 
@@ -290,6 +332,6 @@ def api_reset(request: Request, slug: str):
         return error
     challenge = get_challenge(slug)
     if challenge is None:
-        return JSONResponse({"ok": False, "output": "Challenge tidak ditemukan."}, status_code=404)
+        return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
     result = get_engine().reset(user["id"], challenge)
     return JSONResponse({"ok": result.ok, "output": result.output})

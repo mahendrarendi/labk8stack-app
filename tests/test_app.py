@@ -28,7 +28,7 @@ def join(client: TestClient, name: str | None = None) -> str:
 def test_landing_page(client):
     page = client.get("/")
     assert page.status_code == 200
-    assert "Masuk lab" in page.text
+    assert "Enter lab" in page.text
 
 
 def test_dashboard_requires_login(client):
@@ -41,7 +41,7 @@ def test_join_then_dashboard(client):
     join(client)
     page = client.get("/dashboard")
     assert page.status_code == 200
-    assert "Daftar challenge" in page.text
+    assert "Challenges" in page.text
     # ketiga challenge tampil
     for challenge in CHALLENGES.values():
         assert challenge.title in page.text
@@ -74,7 +74,7 @@ def test_verify_passes_after_fix_and_scores(client):
     name = join(client)
     client.get("/challenge/image-pull-backoff")
 
-    fixed = IMAGE_BROKEN.replace("0.0.0-tidak-ada", "0.1.0")
+    fixed = IMAGE_BROKEN.replace("0.0.0-not-found", "0.1.0")
     response = client.post(
         "/api/challenge/image-pull-backoff/verify",
         json={"yaml": fixed},
@@ -137,3 +137,92 @@ def test_verify_without_attempt_is_rejected(client):
         json={"yaml": IMAGE_BROKEN},
     )
     assert response.status_code == 409
+
+
+# --------------------------------------------------------------- terminal
+
+def test_terminal_help_lists_commands(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    response = client.post(
+        "/api/challenge/image-pull-backoff/terminal", json={"command": "help"}
+    )
+    assert response.status_code == 200
+    assert "kubectl get pods" in response.json()["output"]
+
+
+def test_terminal_get_pods_shows_breakage(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    output = client.post(
+        "/api/challenge/image-pull-backoff/terminal",
+        json={"command": "kubectl get pods"},
+    ).json()["output"]
+    assert "ImagePullBackOff" in output
+
+
+def test_terminal_set_image_fixes_and_verifies(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+
+    command = (
+        "kubectl set image deployment/web "
+        "web=ghcr.io/change-me-owner/k8s-lab-app:0.1.0"
+    )
+    output = client.post(
+        "/api/challenge/image-pull-backoff/terminal", json={"command": command}
+    ).json()["output"]
+    assert "image updated" in output
+
+    pods = client.post(
+        "/api/challenge/image-pull-backoff/terminal",
+        json={"command": "kubectl get pods"},
+    ).json()["output"]
+    assert "Running" in pods
+
+    verified = client.post(
+        "/api/challenge/image-pull-backoff/verify", json={"source": "terminal"}
+    ).json()
+    assert verified["passed"] is True
+    assert verified["score"] > 0
+
+
+def test_terminal_scale_changes_replicas(client):
+    join(client)
+    client.get("/challenge/pending-resources")
+    output = client.post(
+        "/api/challenge/pending-resources/terminal",
+        json={"command": "kubectl scale deployment/web --replicas=3"},
+    ).json()["output"]
+    assert "scaled" in output
+
+    describe = client.post(
+        "/api/challenge/pending-resources/terminal",
+        json={"command": "kubectl describe deployment web"},
+    ).json()["output"]
+    assert "Replicas:           3" in describe
+
+
+def test_terminal_rejects_unknown_verb(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    output = client.post(
+        "/api/challenge/image-pull-backoff/terminal",
+        json={"command": "kubectl drain node-1"},
+    ).json()["output"]
+    assert "not supported" in output
+
+
+def test_terminal_and_editor_share_sandbox(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+
+    client.post(
+        "/api/challenge/image-pull-backoff/terminal",
+        json={"command": "kubectl scale deployment/web --replicas=2"},
+    )
+    describe = client.post(
+        "/api/challenge/image-pull-backoff/terminal",
+        json={"command": "kubectl describe deployment web"},
+    ).json()["output"]
+    assert "Replicas:           2" in describe

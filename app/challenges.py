@@ -1,11 +1,11 @@
-"""Katalog challenge: manifest rusak, tujuan, validator, dan simulasi status."""
+"""Challenge catalog: broken manifests, objectives, validators, status views."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
 
-# Kapasitas "node" yang dipakai simulator (dan disarankan di cluster lab).
+# "Node" capacity used by the simulator (and recommended in the lab cluster).
 NODE_CPU = 2.0
 NODE_MEMORY_MIB = 4096
 
@@ -31,7 +31,14 @@ def parse_memory_mib(value: object) -> float:
     for suffix, factor in units.items():
         if text.endswith(suffix):
             return float(text[: -len(suffix)]) * factor
-    return float(text) / 1024**2  # dianggap byte
+    return float(text) / 1024**2  # assume bytes
+
+
+def object_key(document: dict) -> tuple[str, str]:
+    return (
+        str(document.get("kind", "")),
+        str((document.get("metadata") or {}).get("name", "")),
+    )
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,8 @@ class Challenge:
     hint: str
     broken_yaml: str
     setup_yaml: str
+    target_kind: str
+    target_name: str
     validate: Callable[[dict], tuple[bool, str]]
     simulate: Callable[[dict], list[str]]
 
@@ -71,7 +80,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: ghcr.io/change-me-owner/k8s-lab-app:0.0.0-tidak-ada
+          image: ghcr.io/change-me-owner/k8s-lab-app:0.0.0-not-found
           ports:
             - containerPort: 8080
 """
@@ -86,16 +95,16 @@ def _image_tag(image: str) -> str:
 
 def validate_image(doc: dict) -> tuple[bool, str]:
     if doc.get("kind") != "Deployment":
-        return False, "Resource harus berupa Deployment."
+        return False, "The resource must be a Deployment."
     try:
         container = doc["spec"]["template"]["spec"]["containers"][0]
     except (KeyError, IndexError, TypeError):
-        return False, "Struktur Deployment tidak valid (containers tidak ditemukan)."
+        return False, "Invalid Deployment: no containers found."
     image = str(container.get("image", ""))
     tag = _image_tag(image)
     if tag in GOOD_IMAGE_TAGS:
-        return True, f"Image '{image}' bisa di-pull. Deployment siap berjalan."
-    return False, f"Tag '{tag}' tidak ada di registry. Pod masih ImagePullBackOff."
+        return True, f"Image '{image}' can be pulled. The Deployment is ready."
+    return False, f"Tag '{tag}' does not exist in the registry. Pod is still ImagePullBackOff."
 
 
 def simulate_image(doc: dict) -> list[str]:
@@ -118,7 +127,7 @@ def simulate_image(doc: dict) -> list[str]:
         "web-6d8f7c9b5d-abc12   0/1     ImagePullBackOff   0          4s",
         "",
         f'Warning  Failed  Failed to pull image "{image}": manifest unknown',
-        'Warning  Failed  Error: ErrImagePull',
+        "Warning  Failed  Error: ErrImagePull",
     ]
 
 
@@ -164,13 +173,13 @@ spec:
 
 def validate_service(doc: dict) -> tuple[bool, str]:
     if doc.get("kind") != "Service":
-        return False, "Resource harus berupa Service."
+        return False, "The resource must be a Service."
     selector = (doc.get("spec") or {}).get("selector") or {}
     if selector.get("app") == "web":
-        return True, "Selector cocok dengan label pod, Endpoint terisi."
+        return True, "Selector matches the pod labels, Endpoints are populated."
     return False, (
-        "Selector Service tidak cocok dengan label pod (app: web). "
-        "Akibatnya Endpoint kosong dan request menghasilkan 503."
+        "Service selector does not match the pod labels (app: web). "
+        "Endpoints stay empty, so requests return 503."
     )
 
 
@@ -180,16 +189,16 @@ def simulate_service(doc: dict) -> list[str]:
         return [
             "service/web created",
             "",
-            "NAME         ENDPOINTS                     AGE",
-            "web          10.244.0.15:8080,10.244.0.16:8080   2s",
+            "NAME   ENDPOINTS                               AGE",
+            "web    10.244.0.15:8080,10.244.0.16:8080      2s",
         ]
     return [
         "service/web created",
         "",
-        "NAME         ENDPOINTS   AGE",
-        "web          <none>      2s",
+        "NAME   ENDPOINTS   AGE",
+        "web    <none>      2s",
         "",
-        "Warning: selector 'app=web-v2' tidak cocok dengan pod mana pun (label: app=web)",
+        "Warning: selector 'app=web-v2' matches no pod (pods are labeled app=web)",
     ]
 
 
@@ -228,19 +237,19 @@ spec:
 
 def validate_pending(doc: dict) -> tuple[bool, str]:
     if doc.get("kind") != "Deployment":
-        return False, "Resource harus berupa Deployment."
+        return False, "The resource must be a Deployment."
     try:
         resources = doc["spec"]["template"]["spec"]["containers"][0]["resources"]
         requests = resources.get("requests") or {}
         cpu = parse_cpu(requests.get("cpu", "0"))
         memory = parse_memory_mib(requests.get("memory", "0Mi"))
     except (KeyError, IndexError, TypeError, ValueError):
-        return False, "resources.requests tidak ditemukan atau formatnya tidak valid."
+        return False, "resources.requests is missing or malformed."
     if cpu <= NODE_CPU and memory <= NODE_MEMORY_MIB:
-        return True, f"Request {cpu:g} CPU / {memory:g}Mi muat di node. Pod terjadwal."
+        return True, f"Requests of {cpu:g} CPU / {memory:g}Mi fit the node. Pod is scheduled."
     return False, (
-        f"Request {cpu:g} CPU / {memory:g}Mi melebihi kapasitas node "
-        f"({NODE_CPU:g} CPU / {NODE_MEMORY_MIB}Mi). Pod tetap Pending."
+        f"Requests of {cpu:g} CPU / {memory:g}Mi exceed node capacity "
+        f"({NODE_CPU:g} CPU / {NODE_MEMORY_MIB}Mi). Pod stays Pending."
     )
 
 
@@ -274,70 +283,76 @@ CHALLENGES: dict[str, Challenge] = {
     "image-pull-backoff": Challenge(
         slug="image-pull-backoff",
         title="ImagePullBackOff",
-        difficulty="Mudah",
+        difficulty="Easy",
         points=100,
         duration_seconds=600,
-        summary="Pod tidak pernah start karena image tidak bisa di-pull.",
+        summary="Pods never start because the image cannot be pulled.",
         story=(
-            "Tim kamu baru mengganti deployment, tetapi pod terjebak di "
-            "ImagePullBackOff. Tidak ada log container sama sekali karena "
-            "container belum pernah dibuat."
+            "Your team just shipped a new deployment, but the pod is stuck in "
+            "ImagePullBackOff. There are no container logs at all because the "
+            "container was never created."
         ),
         objective=(
-            "Perbaiki tag image pada Deployment 'web' agar image bisa di-pull "
-            "dan pod berstatus Running."
+            "Fix the image tag on Deployment 'web' so the image can be pulled "
+            "and the pod reaches Running."
         ),
         hint=(
-            "Lihat bagian image. Tag 0.0.0-tidak-ada memang sengaja tidak ada "
-            "di registry. Gunakan tag 0.1.0."
+            "Look at the image field. Tag 0.0.0-not-found is intentionally "
+            "absent from the registry. Use tag 0.1.0."
         ),
         broken_yaml=IMAGE_BROKEN,
         setup_yaml="",
+        target_kind="Deployment",
+        target_name="web",
         validate=validate_image,
         simulate=simulate_image,
     ),
     "service-no-endpoints": Challenge(
         slug="service-no-endpoints",
         title="Service 503 / No Endpoints",
-        difficulty="Sedang",
+        difficulty="Medium",
         points=120,
         duration_seconds=600,
-        summary="Pod sehat, tetapi Service tidak punya Endpoint.",
+        summary="Pods are healthy, but the Service has no Endpoints.",
         story=(
-            "Dua pod berjalan normal, namun setiap request lewat Service "
-            "mendapat 503. Tidak ada error di log aplikasi karena request "
-            "tidak pernah sampai ke pod."
+            "Two pods are running fine, yet every request through the Service "
+            "returns 503. There is nothing in the application logs because "
+            "requests never reach a pod."
         ),
-        objective="Perbaiki selector Service agar cocok dengan label pod.",
+        objective="Fix the Service selector so it matches the pod labels.",
         hint=(
-            "Bandingkan spec.selector pada Service dengan label pada pod "
-            "(app: web). Endpoint kosong berarti selector tidak menemukan pod."
+            "Compare spec.selector on the Service with the pod labels "
+            "(app: web). Empty Endpoints mean the selector matches nothing."
         ),
         broken_yaml=SERVICE_BROKEN,
         setup_yaml=SERVICE_SETUP,
+        target_kind="Service",
+        target_name="web",
         validate=validate_service,
         simulate=simulate_service,
     ),
     "pending-resources": Challenge(
         slug="pending-resources",
         title="Pod Pending",
-        difficulty="Sedang",
+        difficulty="Medium",
         points=150,
         duration_seconds=600,
-        summary="Pod tidak dijadwalkan karena resource request terlalu besar.",
+        summary="The pod is not scheduled because requests are too large.",
         story=(
-            "Deployment tidak kunjung Running. Event menunjukkan "
-            "FailedScheduling: Insufficient cpu dan Insufficient memory."
+            "The Deployment never becomes Running. Events show "
+            "FailedScheduling: Insufficient cpu and Insufficient memory."
         ),
         objective=(
-            "Turunkan resource requests agar muat di node "
+            "Lower the resource requests so they fit the node "
             f"({NODE_CPU:g} CPU, {NODE_MEMORY_MIB}Mi)."
         ),
         hint=(
-            "requests.cpu 8 dan memory 16Gi terlalu besar. Coba 100m dan 128Mi."
+            "requests.cpu 8 and memory 16Gi are far too large. Try 100m and 128Mi."
         ),
         broken_yaml=PENDING_BROKEN,
         setup_yaml="",
+        target_kind="Deployment",
+        target_name="web",
         validate=validate_pending,
         simulate=simulate_pending,
     ),

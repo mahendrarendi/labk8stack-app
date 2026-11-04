@@ -4,16 +4,16 @@
 {% block content %}
 <div class="pagehead">
   <div>
-    <p class="eyebrow">7 hari terakhir</p>
+    <p class="eyebrow">last {{ leaderboard_days }} days</p>
     <h1>Leaderboard</h1>
   </div>
-  <a class="btn ghost" href="{{ '/dashboard' if user else '/' }}">Kembali</a>
+  <a class="btn ghost" href="{{ '/dashboard' if user else '/' }}">Back</a>
 </div>
 
 {% if rows %}
 <table class="board">
   <thead>
-    <tr><th>#</th><th>Nama</th><th class="num">Skor</th><th class="num">Selesai</th><th>Terakhir</th></tr>
+    <tr><th>#</th><th>Name</th><th class="num">Score</th><th class="num">Solved</th><th>Last solved</th></tr>
   </thead>
   <tbody>
     {% for row in rows %}
@@ -28,7 +28,7 @@
   </tbody>
 </table>
 {% else %}
-<p class="muted center">Belum ada yang menyelesaikan challenge dalam {{ leaderboard_days }} hari terakhir.
-  <a href="/">Jadilah yang pertama →</a></p>
+<p class="muted center">Nobody has solved a challenge in the last {{ leaderboard_days }} days.
+  <a href="/">Be the first →</a></p>
 {% endif %}
 {% endblock %}

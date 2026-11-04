@@ -1,4 +1,4 @@
-"""Engine abstrak: simulator dan implementasi Kubernetes asli."""
+"""Engine interface shared by the simulator and the real cluster."""
 
 from __future__ import annotations
 
@@ -15,12 +15,18 @@ class ApplyResult:
 
 
 class Engine:
-    """Interface yang harus dipenuhi kedua mode."""
+    """Both modes must implement these four operations."""
 
     def reset(self, user_id: int, challenge: Challenge) -> ApplyResult:
         raise NotImplementedError
 
     def apply(self, user_id: int, challenge: Challenge, document: dict) -> ApplyResult:
+        raise NotImplementedError
+
+    def current(self, user_id: int, challenge: Challenge) -> dict | None:
+        raise NotImplementedError
+
+    def terminal(self, user_id: int, challenge: Challenge, command: str) -> str:
         raise NotImplementedError
 
 

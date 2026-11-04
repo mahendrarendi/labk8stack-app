@@ -21,9 +21,11 @@ buka web → isi nama → pilih challenge
 ## Fitur (MVP)
 
 - Login **nama saja** (cookie bertanda tangan, tanpa password)
+- **UI berbahasa Inggris**
 - 3 challenge nyata dengan validator masing-masing
-- Editor YAML + tombol **Apply / Verifikasi / Reset sandbox**
-- Output bergaya `kubectl` (simulasi atau cluster asli)
+- **Dua cara menyelesaikan**, bisa dicampur karena berbagi satu sandbox:
+  - **Manifest editor** — edit YAML, Apply, lihat output ala `kubectl`
+  - **Terminal** — imperative: `kubectl get/describe/logs`, `set image`, `scale`, `rollout status`, `delete pod`, `create deployment`
 - Timer per attempt, skor menurun seiring waktu & percobaan
 - Leaderboard **rolling 7 hari**
 - Dua mode engine: `fake` (simulator) dan `kubernetes` (kubectl asli)
@@ -32,7 +34,7 @@ buka web → isi nama → pilih challenge
 
 ```bash
 make setup      # buat .venv + install dependensi
-make test       # 10 test
+make test       # 16 test
 make run        # http://localhost:8080
 ```
 
@@ -96,18 +98,52 @@ lebih awal.
 
 ```
 app/
-├── main.py          # route halaman + API
+├── main.py          # route halaman + API (apply/verify/terminal/reset)
 ├── db.py            # SQLite: users, attempts, leaderboard
 ├── challenges.py    # katalog challenge + validator + simulasi
+├── sandbox.py       # state in-memory, dipakai editor & terminal
+├── terminal.py      # interpreter perintah kubectl (mode fake)
 ├── scoring.py       # rumus skor
 ├── security.py      # cookie sesi
 ├── engine/
 │   ├── fake.py      # simulator
 │   └── kubernetes.py# kubectl asli per namespace
-├── templates/       # halaman server-rendered
+├── templates/       # halaman server-rendered (English UI)
 └── static/          # CSS + JS (tanpa framework)
-tests/               # pytest
+tests/               # pytest (16 test)
 ```
+
+## Terminal
+
+Perintah yang didukung di mode `fake` (semuanya mengubah sandbox yang sama
+dengan editor):
+
+```
+kubectl get pods|deploy|svc|ep
+kubectl describe pod|deployment|service <name>
+kubectl logs <pod>
+kubectl set image deployment/web <container>=<image>
+kubectl scale deployment/web --replicas=<n>
+kubectl rollout status deployment/web
+kubectl delete pod <name>        # pod dibuat ulang oleh Deployment
+kubectl create deployment <name> --image=<image>
+help
+```
+
+Contoh menyelesaikan `ImagePullBackOff` tanpa editor:
+
+```
+$ kubectl get pods
+web-6d8f7c9b5d-abc12   0/1   ImagePullBackOff   0   4m
+$ kubectl set image deployment/web web=ghcr.io/change-me-owner/k8s-lab-app:0.1.0
+deployment.apps/web image updated
+$ kubectl get pods
+web-6d8f7c9b5d-abc12   1/1   Running   0   4m
+```
+
+Di mode `kubernetes`, perintah dijalankan sebagai `kubectl` sungguhan di
+namespace user. Flag `-n/--namespace/-A`, shell operator, dan verb di luar
+daftar aman ditolak.
 
 ## Keamanan & batasan
 
@@ -115,12 +151,13 @@ tests/               # pytest
 - Cookie ditandatangani `SECRET_KEY`; ganti nilai default sebelum dipakai publik.
 - Mode `kubernetes` memberi platform izin ke cluster. Isolasi per user baru
   sebatas namespace — belum ada NetworkPolicy/RBAC ketat.
-- Belum ada terminal embedded; interaksi lewat editor YAML.
+- Terminal mode `fake` lengkap; mode `kubernetes` memakai kubectl asli (belum diuji).
 - Leaderboard memakai SQLite; untuk multi-replica perlu Postgres.
 
 ## Roadmap
 
-1. Terminal embedded (xterm.js + WebSocket + `kubectl exec` ke pod sandbox).
+1. Upgrade terminal ke PTY penuh (xterm.js + WebSocket + `kubectl exec`) agar
+   bisa menjalankan shell interaktif, bukan hanya perintah satu baris.
 2. Verifikasi berbasis kondisi cluster (bukan hanya isi YAML).
 3. Kubeconfig/token sementara per user untuk `kubectl` dari terminal sendiri.
 4. Reset otomatis namespace kedaluwarsa (cron/TTL).

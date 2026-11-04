@@ -4,12 +4,21 @@
 
   const slug = root.dataset.challenge;
   const isActive = root.dataset.active === "true";
+
   const editor = document.getElementById("editor");
-  const output = document.getElementById("console");
+  const consoleBox = document.getElementById("console");
+  const termOut = document.getElementById("term-out");
+  const termForm = document.getElementById("term-form");
+  const termInput = document.getElementById("term-input");
   const timerEl = document.getElementById("timer");
+
   const btnApply = document.getElementById("btn-apply");
   const btnVerify = document.getElementById("btn-verify");
   const btnReset = document.getElementById("btn-reset");
+  const btnTermVerify = document.getElementById("btn-term-verify");
+  const btnTermReset = document.getElementById("btn-term-reset");
+
+  let activeTab = "editor";
 
   const pad = (n) => String(n).padStart(2, "0");
   const clock = (seconds) => {
@@ -17,17 +26,42 @@
     return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
   };
 
-  function print(text, kind) {
-    output.textContent = text || "(tidak ada output)";
-    output.classList.remove("ok", "bad");
-    if (kind) output.classList.add(kind);
+  function printEditor(text, kind) {
+    consoleBox.textContent = text || "(no output)";
+    consoleBox.classList.remove("ok", "bad");
+    if (kind) consoleBox.classList.add(kind);
   }
 
-  function disableActions() {
-    [btnApply, btnVerify, btnReset].forEach((b) => b && (b.disabled = true));
+  function printTerminal(text) {
+    termOut.textContent += `\n${text}`;
+    termOut.scrollTop = termOut.scrollHeight;
   }
 
-  // ---- timer, dihitung dari sisa waktu yang dikirim server ----
+  function say(text, kind) {
+    if (activeTab === "terminal") printTerminal(text);
+    else printEditor(text, kind);
+  }
+
+  function disableAll() {
+    [btnApply, btnVerify, btnReset, btnTermVerify, btnTermReset, termInput]
+      .forEach((element) => element && (element.disabled = true));
+  }
+
+  // ------------------------------------------------------------ tabs
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      activeTab = tab.dataset.tab;
+      document.querySelectorAll(".tab").forEach((other) => {
+        other.classList.toggle("is-active", other === tab);
+      });
+      document.querySelectorAll(".pane").forEach((pane) => {
+        pane.classList.toggle("is-active", pane.dataset.pane === activeTab);
+      });
+      if (activeTab === "terminal" && termInput) termInput.focus();
+    });
+  });
+
+  // ----------------------------------------------------------- timer
   if (isActive && timerEl) {
     let left = Number(root.dataset.remaining || 0);
     let stopped = false;
@@ -36,8 +70,8 @@
       if (left <= 0) {
         stopped = true;
         timerEl.classList.add("expired");
-        print("Waktu habis. Skor attempt ini 0. Muat ulang halaman untuk mulai attempt baru.", "bad");
-        disableActions();
+        say("Time is up. This attempt scores 0. Reload to start a new attempt.", "bad");
+        disableAll();
         return;
       }
       left -= 1;
@@ -49,6 +83,7 @@
     }, 1000);
   }
 
+  // ------------------------------------------------------------- api
   async function postJSON(path, payload) {
     const response = await fetch(path, {
       method: "POST",
@@ -59,63 +94,126 @@
     try {
       data = await response.json();
     } catch (_) {
-      data = { ok: false, output: `respons tidak valid (HTTP ${response.status})` };
+      data = { ok: false, output: `invalid response (HTTP ${response.status})` };
     }
     return { response, data };
   }
 
+  // ---------------------------------------------------------- editor
   btnApply?.addEventListener("click", async () => {
     btnApply.disabled = true;
-    print("$ kubectl apply -f manifest.yaml\nmenunggu cluster...");
+    printEditor("$ kubectl apply -f manifest.yaml\nwaiting for the cluster...");
     try {
       const { response, data } = await postJSON(`/api/challenge/${slug}/apply`, {
         yaml: editor.value,
       });
-      print(data.output || "(tidak ada output)", response.ok ? "ok" : "bad");
-    } catch (err) {
-      print(`gagal menghubungi server: ${err}`, "bad");
+      printEditor(data.output || "(no output)", response.ok ? "ok" : "bad");
+    } catch (error) {
+      printEditor(`could not reach the server: ${error}`, "bad");
     } finally {
       btnApply.disabled = false;
     }
   });
 
-  btnVerify?.addEventListener("click", async () => {
-    btnVerify.disabled = true;
-    print("memverifikasi kondisi cluster...");
+  editor?.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      btnApply?.click();
+    }
+  });
+
+  // -------------------------------------------------------- terminal
+  const history = [];
+  let historyIndex = -1;
+
+  termForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const command = termInput.value.trim();
+    if (!command) return;
+
+    printTerminal(`$ ${command}`);
+    termInput.value = "";
+    history.push(command);
+    historyIndex = history.length;
+    termInput.disabled = true;
+
     try {
-      const { data } = await postJSON(`/api/challenge/${slug}/verify`, {
-        yaml: editor.value,
-      });
+      const { data } = await postJSON(`/api/challenge/${slug}/terminal`, { command });
+      printTerminal(data.output || "(no output)");
+    } catch (error) {
+      printTerminal(`could not reach the server: ${error}`);
+    } finally {
+      termInput.disabled = false;
+      termInput.focus();
+    }
+  });
+
+  termInput?.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (historyIndex > 0) historyIndex -= 1;
+      termInput.value = history[historyIndex] || "";
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (historyIndex < history.length - 1) {
+        historyIndex += 1;
+        termInput.value = history[historyIndex];
+      } else {
+        historyIndex = history.length;
+        termInput.value = "";
+      }
+    }
+  });
+
+  // ---------------------------------------------------------- verify
+  async function verify(source, button) {
+    if (button) button.disabled = true;
+    say("verifying cluster state...");
+
+    try {
+      const payload = source === "editor"
+        ? { yaml: editor.value, source }
+        : { source };
+      const { data } = await postJSON(`/api/challenge/${slug}/verify`, payload);
 
       if (data.passed) {
-        print(`✔ LULUS — ${data.score} poin (percobaan ke-${data.tries}, sisa ${clock(data.remaining)}).\nMemuat ulang...`, "ok");
+        say(`✔ PASSED — ${data.score} points (attempt #${data.tries}, ${clock(data.remaining)} left).\nReloading...`, "ok");
         setTimeout(() => window.location.reload(), 1600);
         return;
       }
 
       if (data.expired) {
-        print(`✘ ${data.message}`, "bad");
-        disableActions();
+        say(`✘ ${data.message}`, "bad");
+        disableAll();
         return;
       }
 
-      print(`✘ ${data.message}\nPercobaan: ${data.tries} · sisa waktu ${clock(data.remaining)}`, "bad");
-    } catch (err) {
-      print(`gagal memverifikasi: ${err}`, "bad");
+      say(`✘ ${data.message}\nAttempt: ${data.tries} · time left ${clock(data.remaining)}`, "bad");
+    } catch (error) {
+      say(`verification failed: ${error}`, "bad");
     } finally {
-      if (btnVerify) btnVerify.disabled = false;
+      if (button) button.disabled = false;
     }
-  });
+  }
 
-  btnReset?.addEventListener("click", async () => {
-    btnReset.disabled = true;
+  btnVerify?.addEventListener("click", () => verify("editor", btnVerify));
+  btnTermVerify?.addEventListener("click", () => verify("terminal", btnTermVerify));
+
+  // ----------------------------------------------------------- reset
+  async function reset(button, fromTerminal) {
+    if (button) button.disabled = true;
     try {
       const { data } = await postJSON(`/api/challenge/${slug}/reset`);
-      print(data.output || "sandbox direset", "ok");
-    } catch (err) {
-      print(`gagal reset: ${err}`, "bad");
+      const text = data.output || "sandbox reset";
+      if (fromTerminal) printTerminal(text);
+      else printEditor(text, "ok");
+    } catch (error) {
+      say(`reset failed: ${error}`, "bad");
     } finally {
-      btnReset.disabled = false;
+      if (button) button.disabled = false;
     }
-  });
+  }
+
+  btnReset?.addEventListener("click", () => reset(btnReset, false));
+  btnTermReset?.addEventListener("click", () => reset(btnTermReset, true));
 })();

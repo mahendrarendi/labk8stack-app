@@ -1,26 +1,31 @@
-"""Simulator: tidak menyentuh cluster, cukup meniru output kubectl.
+"""Simulator engine: no cluster required.
 
-Berguna untuk demo, pengembangan UI, dan unit test. Perilakunya ditentukan
-oleh challenge.simulate() berdasarkan isi YAML yang dikirim user.
+State lives in app.sandbox, shared with the terminal interpreter, so the YAML
+editor and imperative commands operate on the same objects.
 """
 
 from __future__ import annotations
 
-import time
-
 from ..challenges import Challenge
+from ..sandbox import get_sandbox, reset_sandbox
+from ..terminal import execute
 from . import ApplyResult, Engine
 
 
 class FakeEngine(Engine):
-    def __init__(self) -> None:
-        self._applied: dict[tuple[int, str], int] = {}
-
     def reset(self, user_id: int, challenge: Challenge) -> ApplyResult:
-        self._applied[(user_id, challenge.slug)] = int(time.time())
-        return ApplyResult(ok=True, output="sandbox direset ke kondisi rusak.")
+        reset_sandbox(user_id, challenge)
+        return ApplyResult(ok=True, output="Sandbox reset to the broken state.")
 
     def apply(self, user_id: int, challenge: Challenge, document: dict) -> ApplyResult:
-        lines = challenge.simulate(document)
-        self._applied[(user_id, challenge.slug)] = int(time.time())
-        return ApplyResult(ok=True, output="\n".join(lines))
+        sandbox = get_sandbox(user_id, challenge)
+        sandbox.put(document)
+        return ApplyResult(ok=True, output="\n".join(challenge.simulate(document)))
+
+    def current(self, user_id: int, challenge: Challenge) -> dict | None:
+        sandbox = get_sandbox(user_id, challenge)
+        return sandbox.get(challenge.target_kind, challenge.target_name)
+
+    def terminal(self, user_id: int, challenge: Challenge, command: str) -> str:
+        sandbox = get_sandbox(user_id, challenge)
+        return execute(sandbox, challenge, command)
