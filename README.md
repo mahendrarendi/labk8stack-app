@@ -4,9 +4,10 @@ Platform latihan Kubernetes bergaya KodeKloud: user memasukkan nama, memilih
 challenge, lalu **memperbaiki manifest yang sengaja dirusak** lewat editor YAML
 di browser. Ada timer, skor, dan leaderboard 7 hari.
 
-Contoh challenge: pod `ImagePullBackOff` karena tag image salah, Service tanpa
-Endpoint karena selector keliru, dan pod `Pending` karena resource request
-terlalu besar.
+10 challenge dengan tingkat kesulitan Easy/Medium/Hard. UI hanya menampilkan
+gejala (pod tidak ready, Service 503, rollout macet, dan seterusnya) — penyebab
+dan perbaikannya tidak pernah ditulis, jadi user harus melakukan troubleshooting
+sendiri lewat `kubectl`.
 
 ## Alur
 
@@ -22,10 +23,10 @@ buka web → isi nama → pilih challenge
 
 - Login **nama saja** (cookie bertanda tangan, tanpa password)
 - **UI berbahasa Inggris**
-- 3 challenge nyata dengan validator masing-masing
+- **10 challenge** nyata dengan validator masing-masing
 - **Dua cara menyelesaikan**, bisa dicampur karena berbagi satu sandbox:
   - **Manifest editor** — edit YAML, Apply, lihat output ala `kubectl`
-  - **Terminal** — imperative: `kubectl get/describe/logs`, `set image`, `scale`, `rollout status`, `delete pod`, `create deployment`
+  - **Terminal** — imperative: `kubectl get/describe/logs`, `set image`, `set env`, `set resources`, `scale`, `rollout status|resume|pause`, `delete pod`, `create deployment`
 - Timer per attempt, skor menurun seiring waktu & percobaan
 - Leaderboard **rolling 7 hari**
 - Dua mode engine: `fake` (simulator) dan `kubernetes` (kubectl asli)
@@ -34,7 +35,7 @@ buka web → isi nama → pilih challenge
 
 ```bash
 make setup      # buat .venv + install dependensi
-make test       # 16 test
+make test       # 26 test
 make run        # http://localhost:8080
 ```
 
@@ -74,18 +75,26 @@ dalamnya — **jangan pakai cluster produksi**.
 
 ## Challenge
 
-| Slug | Gejala yang ditampilkan ke user | Penyebab (spoiler — jangan tampil di UI) | Poin |
-|---|---|---|---|
-| `image-pull-backoff` | Pod tidak pernah ready | Tag image salah | 100 |
-| `service-no-endpoints` | Service selalu 503 | `selector` Service | 120 |
-| `pending-resources` | Pod tetap `Pending` | `resources.requests` | 150 |
+| Slug | Judul di UI | Gejala yang ditampilkan | Penyebab (spoiler) | Poin |
+|---|---|---|---|---|
+| `image-pull-backoff` | Deployment never becomes ready | Pod tidak pernah ready | Tag image tidak ada di registry | 100 |
+| `service-no-endpoints` | Service returns 503 | Service selalu 503 | `selector` Service tidak cocok dengan label pod | 110 |
+| `pending-resources` | Pod never schedules | Pod tetap `Pending` | `resources.requests` melebihi kapasitas node | 140 |
+| `command-override` | Container restarts in a loop | Pod restart terus | `command` menimpa entrypoint image | 110 |
+| `oom-killed` | Container is killed while starting | Container mati saat boot | `limits.memory` terlalu kecil | 140 |
+| `readiness-probe` | Pods never become Ready | Pod Running tapi 0 ready | `readinessProbe` menunjuk path salah | 130 |
+| `port-env` | Application unreachable after config change | Container hidup tapi tidak ready | `PORT` beda dengan port probe | 130 |
+| `service-target-port` | Service connections are refused | Endpoint ada, koneksi gagal | `targetPort` salah | 130 |
+| `deployment-selector` | Deployment cannot be applied | Apply ditolak, tidak ada pod | `selector` != label template | 150 |
+| `deployment-paused` | Rollout never progresses | Tidak ada pod sama sekali | `spec.paused: true` | 150 |
 
 UI hanya menampilkan gejala. Jangan pernah menambahkan penyebab, nama field yang
 salah, atau nilai pengganti ke `summary` / `story` / `objective` / `hint`,
 karena itu menghilangkan bagian troubleshoot dari latihan.
 
 Menambah challenge = menambah satu entri di `app/challenges.py`: manifest rusak,
-fungsi `validate(doc)`, dan `simulate(doc)` untuk mode fake.
+fungsi `validate(doc)`, `simulate(doc)` untuk mode fake, plus `status` /
+`pod_events` / `pod_logs` agar simulator terminal ikut berperilaku benar.
 
 ## Skor
 
@@ -114,7 +123,7 @@ app/
 │   └── kubernetes.py# kubectl asli per namespace
 ├── templates/       # halaman server-rendered (English UI)
 └── static/          # CSS + JS (tanpa framework)
-tests/               # pytest (16 test)
+tests/               # pytest (26 test)
 ```
 
 ## Terminal

@@ -20,7 +20,8 @@ class FakeEngine(Engine):
     def apply(self, user_id: int, challenge: Challenge, document: dict) -> ApplyResult:
         sandbox = get_sandbox(user_id, challenge)
         sandbox.put(document)
-        return ApplyResult(ok=True, output="\n".join(challenge.simulate(document)))
+        ok = challenge.accepts(document) if challenge.accepts else True
+        return ApplyResult(ok=ok, output="\n".join(challenge.simulate(document)))
 
     def current(self, user_id: int, challenge: Challenge) -> dict | None:
         sandbox = get_sandbox(user_id, challenge)

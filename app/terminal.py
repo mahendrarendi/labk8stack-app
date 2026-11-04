@@ -2,26 +2,17 @@
 
 Supports a useful subset of kubectl so learners can fix challenges either by
 editing YAML or by typing commands. Both paths mutate the same Sandbox.
+
+Per-challenge behaviour (pod status, events, logs) comes from ``Challenge``
+callables in ``app/challenges.py``; this module only renders it.
 """
 
 from __future__ import annotations
 
 import shlex
 
-from .challenges import (
-    GOOD_IMAGE_TAGS,
-    NODE_CPU,
-    NODE_MEMORY_MIB,
-    Challenge,
-    _image_tag,
-    parse_cpu,
-    parse_memory_mib,
-)
+from .challenges import APP_PORT, Challenge, format_table
 from .sandbox import Sandbox
-
-POD_IMAGE = "web-6d8f7c9b5d-abc12"
-POD_PENDING = "web-7c5b9f8d6e-xyz34"
-PODS_SERVICE = ["web-5f7c9d8b6-4k2lp", "web-5f7c9d8b6-9x7qz"]
 
 HELP = """Available commands (simulated kubectl):
   kubectl get pods|deploy|deployments|svc|services|ep|endpoints
@@ -30,82 +21,102 @@ HELP = """Available commands (simulated kubectl):
   kubectl describe service <name>
   kubectl logs <pod> [--previous]
   kubectl set image deployment/<name> <container>=<image>
+  kubectl set env deployment/<name> <KEY>=<value>
+  kubectl set resources deployment/<name> --limits=cpu=500m,memory=256Mi
   kubectl scale deployment/<name> --replicas=<n>
   kubectl rollout status deployment/<name>
+  kubectl rollout resume deployment/<name>
+  kubectl rollout pause deployment/<name>
   kubectl delete pod <name>
   kubectl create deployment <name> --image=<image>
   help
 
 The editor and this terminal share one sandbox: changes stack up."""
 
+NO_PODS = "No resources found in lab namespace."
 
-def _deployment(sandbox: Sandbox) -> dict | None:
-    return sandbox.get("Deployment", "web")
+
+# ------------------------------------------------------------- accessors
+
+
+def _workload(sandbox: Sandbox, challenge: Challenge) -> dict | None:
+    return sandbox.get(challenge.workload_kind, challenge.workload_name)
 
 
 def _service(sandbox: Sandbox) -> dict | None:
     return sandbox.get("Service", "web")
 
 
-def _container(deployment: dict) -> dict:
-    return deployment["spec"]["template"]["spec"]["containers"][0]
+def _container(workload: dict) -> dict:
+    return workload["spec"]["template"]["spec"]["containers"][0]
 
 
-def _deployment_status(sandbox: Sandbox, challenge: Challenge) -> tuple[str, str]:
-    """Return (READY, STATUS) for the challenge's primary pod."""
-    deployment = _deployment(sandbox)
-    if deployment is None:
-        return "0/1", "NotFound"
-    try:
-        container = _container(deployment)
-    except (KeyError, IndexError, TypeError):
-        return "0/1", "Invalid"
+def _template_labels(workload: dict) -> dict:
+    return (
+        workload.get("spec", {})
+        .get("template", {})
+        .get("metadata", {})
+        .get("labels", {})
+        or {}
+    )
 
-    if challenge.slug == "pending-resources":
-        requests = (container.get("resources") or {}).get("requests") or {}
-        try:
-            cpu = parse_cpu(requests.get("cpu", "0"))
-            memory = parse_memory_mib(requests.get("memory", "0Mi"))
-        except ValueError:
-            return "0/1", "Pending"
-        if cpu <= NODE_CPU and memory <= NODE_MEMORY_MIB:
-            return "1/1", "Running"
-        return "0/1", "Pending"
 
-    image = str(container.get("image", ""))
-    if _image_tag(image) in GOOD_IMAGE_TAGS:
+def _status(workload: dict, challenge: Challenge) -> tuple[str, str]:
+    if challenge.status is None:
         return "1/1", "Running"
-    return "0/1", "ImagePullBackOff"
+    try:
+        return challenge.status(workload)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return "0/1", "Invalid"
 
 
 def _pod_rows(sandbox: Sandbox, challenge: Challenge) -> list[tuple[str, str, str]]:
-    if challenge.slug == "service-no-endpoints":
-        return [(name, "1/1", "Running") for name in PODS_SERVICE]
-    ready, status = _deployment_status(sandbox, challenge)
-    name = POD_PENDING if challenge.slug == "pending-resources" else POD_IMAGE
-    return [(name, ready, status)]
+    workload = _workload(sandbox, challenge)
+    if workload is None:
+        return []
+    ready, state = _status(workload, challenge)
+    if state in {"Invalid", "Paused"}:
+        return []
+    return [(name, ready, state) for name in challenge.pod_names]
 
 
-def _endpoints(sandbox: Sandbox) -> str:
+def _pod_events(workload: dict, challenge: Challenge) -> list[str]:
+    if challenge.pod_events is None:
+        return []
+    try:
+        return challenge.pod_events(workload)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return []
+
+
+def _pod_logs(workload: dict, challenge: Challenge) -> list[str]:
+    if challenge.pod_logs is None:
+        return [
+            "[info] listening on 0.0.0.0:8080",
+            "[info] GET /healthz 200",
+            "[info] GET /api/info 200",
+        ]
+    try:
+        return challenge.pod_logs(workload)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return []
+
+
+def _endpoints(sandbox: Sandbox) -> tuple[str, str]:
+    """Return (endpoints, target_port) for the Service."""
     service = _service(sandbox)
     if service is None:
-        return "<none>"
-    selector = (service.get("spec") or {}).get("selector") or {}
-    if selector.get("app") == "web":
-        return "10.244.0.15:8080,10.244.0.16:8080"
-    return "<none>"
-
-
-def _table(headers: list[str], rows: list[list[str]]) -> str:
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(str(cell)))
-    line = "   ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
-    body = "\n".join(
-        "   ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row)) for row in rows
-    )
-    return line + "\n" + body if body else line
+        return "<none>", str(APP_PORT)
+    spec = service.get("spec") or {}
+    selector = spec.get("selector") or {}
+    try:
+        target = str(spec.get("ports")[0].get("targetPort", APP_PORT))
+    except (KeyError, IndexError, TypeError):
+        target = str(APP_PORT)
+    if selector.get("app") != "web":
+        return "<none>", target
+    addresses = [f"10.244.0.15:{target}", f"10.244.0.16:{target}"]
+    return ",".join(addresses), target
 
 
 def _split_target(tokens: list[str]) -> tuple[str, str | None, list[str]]:
@@ -129,6 +140,13 @@ def _flag(rest: list[str], name: str) -> str | None:
         if token.startswith(f"{name}="):
             return token.split("=", 1)[1]
     return None
+
+
+def _restarts(state: str) -> str:
+    return "6" if state == "CrashLoopBackOff" else "0"
+
+
+# --------------------------------------------------------------- dispatch
 
 
 def execute(sandbox: Sandbox, challenge: Challenge, command: str) -> str:
@@ -158,11 +176,17 @@ def execute(sandbox: Sandbox, challenge: Challenge, command: str) -> str:
     if verb == "logs":
         return _logs(sandbox, challenge, rest)
     if verb == "set":
-        if not rest or rest[0] != "image":
-            return "error: usage: kubectl set image deployment/<name> <container>=<image>"
-        return _set_image(sandbox, rest[1:])
+        if not rest:
+            return "error: usage: kubectl set image|env deployment/<name> ..."
+        if rest[0] == "image":
+            return _set_image(sandbox, challenge, rest[1:])
+        if rest[0] == "env":
+            return _set_env(sandbox, challenge, rest[1:])
+        if rest[0] == "resources":
+            return _set_resources(sandbox, challenge, rest[1:])
+        return "error: usage: kubectl set image|env|resources deployment/<name> ..."
     if verb == "scale":
-        return _scale(sandbox, rest)
+        return _scale(sandbox, challenge, rest)
     if verb == "rollout":
         return _rollout(sandbox, challenge, rest)
     if verb == "delete":
@@ -183,31 +207,43 @@ def _get(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
     what = rest[0]
 
     if what in {"pods", "pod", "po"}:
-        rows = [[name, ready, status, "0", "4m"] for name, ready, status in _pod_rows(sandbox, challenge)]
-        return _table(["NAME", "READY", "STATUS", "RESTARTS", "AGE"], rows)
+        rows = [
+            [name, ready, status, _restarts(status), "4m"]
+            for name, ready, status in _pod_rows(sandbox, challenge)
+        ]
+        if not rows:
+            return NO_PODS
+        return format_table(["NAME", "READY", "STATUS", "RESTARTS", "AGE"], rows)
 
     if what in {"deploy", "deployment", "deployments"}:
-        deployment = _deployment(sandbox)
-        if deployment is None:
-            return "No resources found."
-        ready = sum(1 for _, r, _ in _pod_rows(sandbox, challenge) if r == "1/1")
-        total = len(_pod_rows(sandbox, challenge))
-        return _table(
+        workload = _workload(sandbox, challenge)
+        if workload is None:
+            return NO_PODS
+        pods = _pod_rows(sandbox, challenge)
+        ready = sum(1 for _, r, _ in pods if r == "1/1")
+        desired = int((workload.get("spec") or {}).get("replicas", len(pods)) or 0)
+        return format_table(
             ["NAME", "READY", "UP-TO-DATE", "AVAILABLE", "AGE"],
-            [["web", f"{ready}/{total}", str(total), str(ready), "4m"]],
+            [["web", f"{ready}/{desired}", str(len(pods)), str(ready), "4m"]],
         )
 
     if what in {"svc", "service", "services"}:
         service = _service(sandbox)
         if service is None:
-            return "No resources found."
-        return _table(
+            return NO_PODS
+        try:
+            port = (service.get("spec") or {}).get("ports")[0]
+            ports = f"{port.get('port', 80)}/TCP"
+        except (KeyError, IndexError, TypeError):
+            ports = "80/TCP"
+        return format_table(
             ["NAME", "TYPE", "CLUSTER-IP", "PORT(S)", "AGE"],
-            [["web", "ClusterIP", "10.96.12.34", "80/TCP", "4m"]],
+            [["web", "ClusterIP", "10.96.12.34", ports, "4m"]],
         )
 
     if what in {"ep", "endpoints", "endpoint"}:
-        return _table(["NAME", "ENDPOINTS", "AGE"], [["web", _endpoints(sandbox), "4m"]])
+        endpoints, _ = _endpoints(sandbox)
+        return format_table(["NAME", "ENDPOINTS", "AGE"], [["web", endpoints, "4m"]])
 
     if what in {"all", "pods,svc", "pods,services"}:
         return "\n\n".join([
@@ -225,6 +261,10 @@ def _describe(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
 
     if kind in {"pod", "pods", "po"}:
         rows = _pod_rows(sandbox, challenge)
+        workload = _workload(sandbox, challenge)
+        if not rows or workload is None:
+            wanted = name or (challenge.pod_names[0] if challenge.pod_names else "web")
+            return f'Error from server (NotFound): pods "{wanted}" not found'
         selected = rows[0]
         if name:
             match = [row for row in rows if row[0] == name]
@@ -232,51 +272,57 @@ def _describe(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
                 return f'Error from server (NotFound): pods "{name}" not found'
             selected = match[0]
         pod_name, ready, status = selected
-        deployment = _deployment(sandbox)
-        image = ""
-        if deployment is not None:
-            try:
-                image = str(_container(deployment).get("image", ""))
-            except (KeyError, IndexError, TypeError):
-                image = ""
-        events = {
-            "ImagePullBackOff": [
-                'Warning  Failed  Failed to pull image "' + image + '": manifest unknown',
-                "Warning  Failed  Error: ErrImagePull",
-            ],
-            "Pending": [
-                "Warning  FailedScheduling  0/1 nodes are available: "
-                "1 Insufficient cpu, 1 Insufficient memory.",
-            ],
-            "Running": ["Normal  Started  Container started"],
-        }.get(status, [])
+        try:
+            container = _container(workload)
+            image = str(container.get("image", ""))
+            ports = ",".join(
+                str(port.get("containerPort"))
+                for port in container.get("ports") or []
+                if port.get("containerPort") is not None
+            )
+        except (KeyError, IndexError, TypeError):
+            image, ports = "", ""
+        labels = ",".join(f"{k}={v}" for k, v in _template_labels(workload).items())
         lines = [
             f"Name:         {pod_name}",
             "Namespace:    lab",
-            "Labels:       app=web",
+            f"Labels:       {labels}",
             f"Status:       {status}",
             f"Ready:        {ready}",
+            f"Restarts:     {_restarts(status)}",
             f"Image:        {image}",
+            f"Ports:        {ports}",
             "",
             "Events:",
-            *[f"  {event}" for event in events],
         ]
+        events = _pod_events(workload, challenge)
+        lines += [f"  {event}" for event in events] if events else ["  <none>"]
         return "\n".join(lines)
 
     if kind in {"deploy", "deployment", "deployments"}:
-        deployment = _deployment(sandbox)
-        if deployment is None:
+        workload = _workload(sandbox, challenge)
+        if workload is None:
             return f'Error from server (NotFound): deployments.apps "{name or "web"}" not found'
         try:
-            container = _container(deployment)
+            container = _container(workload)
         except (KeyError, IndexError, TypeError):
             return "Error: invalid Deployment"
-        ready, status = _deployment_status(sandbox, challenge)
+        ready, status = _status(workload, challenge)
+        spec = workload.get("spec") or {}
+        template_labels = ",".join(
+            f"{k}={v}" for k, v in _template_labels(workload).items()
+        )
+        selector = ",".join(
+            f"{k}={v}" for k, v in (spec.get("selector") or {}).get("matchLabels", {}).items()
+        )
         return "\n".join([
             f"Name:               {name or 'web'}",
             "Namespace:          lab",
-            f"Replicas:           {deployment.get('spec', {}).get('replicas', 1)} desired",
+            f"Replicas:           {spec.get('replicas', 1)} desired",
             f"Available:          {1 if ready == '1/1' else 0}",
+            f"Paused:             {bool(spec.get('paused'))}",
+            f"Selector:           {selector}",
+            f"Template Labels:    {template_labels}",
             f"Container:          {container.get('name', 'web')}",
             f"  Image:            {container.get('image', '')}",
             f"  Requests:         {(container.get('resources') or {}).get('requests')}",
@@ -287,14 +333,22 @@ def _describe(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
         service = _service(sandbox)
         if service is None:
             return f'Error from server (NotFound): services "{name or "web"}" not found'
+        endpoints, target = _endpoints(sandbox)
+        spec = service.get("spec") or {}
+        try:
+            port = spec.get("ports")[0]
+            mapping = f"{port.get('port', 80)}/{port.get('protocol', 'TCP')} -> {port.get('targetPort')}"
+        except (KeyError, IndexError, TypeError):
+            mapping = "?"
+        selector = ",".join(f"{k}={v}" for k, v in (spec.get("selector") or {}).items())
         return "\n".join([
             f"Name:              {name or 'web'}",
             "Namespace:         lab",
             "Type:              ClusterIP",
             "IP:                10.96.12.34",
-            f"Selector:          {service.get('spec', {}).get('selector')}",
-            f"Endpoints:         {_endpoints(sandbox)}",
-            f"Port:              80/TCP",
+            f"Selector:          {selector}",
+            f"Endpoints:         {endpoints}",
+            f"Port:              {mapping}",
         ])
 
     return f"error: describe for '{kind}' is not supported"
@@ -303,28 +357,21 @@ def _describe(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
 def _logs(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
     if not rest:
         return "error: a pod name is required"
-    _, status = _deployment_status(sandbox, challenge)
-    if challenge.slug == "service-no-endpoints":
-        return "\n".join([
-            "[info] listening on 0.0.0.0:8080",
-            '[info] GET /healthz 200',
-            '[info] GET /api/info 200',
-        ])
-    if status == "ImagePullBackOff":
+    workload = _workload(sandbox, challenge)
+    if workload is None:
+        return f'Error from server (NotFound): pods "{rest[0]}" not found'
+    _, status = _status(workload, challenge)
+    if status in {"Invalid", "Paused"}:
+        return f'Error from server (NotFound): pods "{rest[0]}" not found'
+    if status in {"ImagePullBackOff", "Pending"}:
         return (
             f'Error from server (BadRequest): container "web" in pod "{rest[0]}" '
-            "is waiting to start: trying and failing to pull image"
+            "is waiting to start: container is not running"
         )
-    if status == "Pending":
-        return f'Error from server (BadRequest): container "web" in pod "{rest[0]}" is not running'
-    return "\n".join([
-        "[info] listening on 0.0.0.0:8080",
-        '[info] GET /healthz 200',
-        '[info] GET /api/info 200',
-    ])
+    return "\n".join(_pod_logs(workload, challenge))
 
 
-def _set_image(sandbox: Sandbox, rest: list[str]) -> str:
+def _set_image(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
     kind, name, tail = _split_target(rest)
     if kind not in {"deploy", "deployment", "deployments"}:
         return "error: usage: kubectl set image deployment/<name> <container>=<image>"
@@ -333,40 +380,118 @@ def _set_image(sandbox: Sandbox, rest: list[str]) -> str:
         return "error: usage: kubectl set image deployment/<name> <container>=<image>"
     container_name, image = assignment.split("=", 1)
 
-    deployment = _deployment(sandbox)
-    if deployment is None:
+    workload = _workload(sandbox, challenge)
+    if workload is None:
         return f'Error from server (NotFound): deployments.apps "{name or "web"}" not found'
     try:
-        container = _container(deployment)
+        container = _container(workload)
     except (KeyError, IndexError, TypeError):
         return "Error: invalid Deployment"
     if container.get("name") and container.get("name") != container_name:
         return f'error: unable to find container named "{container_name}"'
 
     container["image"] = image
-    sandbox.put(deployment)
+    sandbox.put(workload)
     return f"deployment.apps/{name or 'web'} image updated"
 
 
-def _scale(sandbox: Sandbox, rest: list[str]) -> str:
+def _set_env(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
+    kind, name, tail = _split_target(rest)
+    if kind not in {"deploy", "deployment", "deployments"}:
+        return "error: usage: kubectl set env deployment/<name> <KEY>=<value>"
+    assignment = tail[0] if tail else ""
+    if "=" not in assignment:
+        return "error: usage: kubectl set env deployment/<name> <KEY>=<value>"
+    key, value = assignment.split("=", 1)
+
+    workload = _workload(sandbox, challenge)
+    if workload is None:
+        return f'Error from server (NotFound): deployments.apps "{name or "web"}" not found'
+    try:
+        container = _container(workload)
+    except (KeyError, IndexError, TypeError):
+        return "Error: invalid Deployment"
+
+    env = container.setdefault("env", [])
+    for item in env:
+        if item.get("name") == key:
+            item["value"] = value
+            break
+    else:
+        env.append({"name": key, "value": value})
+    sandbox.put(workload)
+    return f"deployment.apps/{name or 'web'} env updated"
+
+
+def _set_resources(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
+    kind, name, tail = _split_target(rest)
+    if kind not in {"deploy", "deployment", "deployments"}:
+        return "error: usage: kubectl set resources deployment/<name> --limits=memory=256Mi"
+    requests = _flag(tail, "--requests")
+    limits = _flag(tail, "--limits")
+    if requests is None and limits is None:
+        return "error: usage: kubectl set resources deployment/<name> --limits=memory=256Mi"
+
+    workload = _workload(sandbox, challenge)
+    if workload is None:
+        return f'Error from server (NotFound): deployments.apps "{name or "web"}" not found'
+    try:
+        container = _container(workload)
+    except (KeyError, IndexError, TypeError):
+        return "Error: invalid Deployment"
+
+    resources = container.setdefault("resources", {})
+    for section, spec in (("requests", requests), ("limits", limits)):
+        if spec is None:
+            continue
+        bucket = resources.setdefault(section, {})
+        for item in spec.split(","):
+            if "=" not in item:
+                return f"error: cannot parse '{item}' in --{section}"
+            key, value = item.split("=", 1)
+            bucket[key.strip()] = value.strip()
+    sandbox.put(workload)
+    return f"deployment.apps/{name or 'web'} resource requirements updated"
+
+
+def _scale(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
     kind, name, tail = _split_target(rest)
     if kind not in {"deploy", "deployment", "deployments"}:
         return "error: usage: kubectl scale deployment/<name> --replicas=<n>"
     value = _flag(tail, "--replicas")
     if value is None or not value.isdigit():
         return "error: --replicas must be a number"
-    deployment = _deployment(sandbox)
-    if deployment is None:
+    workload = _workload(sandbox, challenge)
+    if workload is None:
         return f'Error from server (NotFound): deployments.apps "{name or "web"}" not found'
-    deployment.setdefault("spec", {})["replicas"] = int(value)
-    sandbox.put(deployment)
+    workload.setdefault("spec", {})["replicas"] = int(value)
+    sandbox.put(workload)
     return f"deployment.apps/{name or 'web'} scaled"
 
 
 def _rollout(sandbox: Sandbox, challenge: Challenge, rest: list[str]) -> str:
-    if not rest or rest[0] != "status":
-        return "error: usage: kubectl rollout status deployment/<name>"
-    _, status = _deployment_status(sandbox, challenge)
+    if not rest or rest[0] not in {"status", "resume", "pause"}:
+        return "error: usage: kubectl rollout status|resume|pause deployment/<name>"
+    action = rest[0]
+    workload = _workload(sandbox, challenge)
+    if workload is None:
+        return 'Error from server (NotFound): deployments.apps "web" not found'
+
+    if action == "resume":
+        workload.setdefault("spec", {})["paused"] = False
+        sandbox.put(workload)
+        return 'deployment.apps/web resumed'
+    if action == "pause":
+        workload.setdefault("spec", {})["paused"] = True
+        sandbox.put(workload)
+        return 'deployment.apps/web paused'
+
+    if (workload.get("spec") or {}).get("paused"):
+        return (
+            'Waiting for deployment "web" rollout to finish: '
+            "0 of 1 updated replicas are available..."
+        )
+    _, status = _status(workload, challenge)
     if status == "Running":
         return 'deployment "web" successfully rolled out'
     return f'Waiting for deployment "web" rollout to finish: current status {status}'
