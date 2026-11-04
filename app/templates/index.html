@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }} — belajar Kubernetes{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">platform latihan</p>
+  <h1>Cluster-nya rusak.<br>Tugasmu memperbaiki.</h1>
+  <p class="lead">
+    Setiap challenge memberi satu manifest yang sengaja dibuat salah —
+    <code>ImagePullBackOff</code>, Service tanpa Endpoint, pod <code>Pending</code>.
+    Perbaiki lewat editor YAML di browser, sebelum waktu habis.
+  </p>
+
+  {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+
+  <form method="post" action="/join" class="join">
+    <label for="name">Nama kamu</label>
+    <div class="row">
+      <input id="name" name="name" type="text" placeholder="mis. rendi" maxlength="40" required autofocus>
+      <button class="btn primary" type="submit">Masuk lab</button>
+    </div>
+    <p class="hint">Tanpa password — cukup nama untuk leaderboard.</p>
+  </form>
+</section>
+
+<section class="grid three">
+  <article class="panel">
+    <h2>1. Pilih challenge</h2>
+    <p>Tiga skenario nyata dengan tingkat kesulitan berbeda.</p>
+  </article>
+  <article class="panel">
+    <h2>2. Perbaiki YAML</h2>
+    <p>Edit manifest, <em>Apply</em>, lalu baca output seperti <code>kubectl</code>.</p>
+  </article>
+  <article class="panel">
+    <h2>3. Kejar skor</h2>
+    <p>Makin cepat dan makin sedikit percobaan, makin tinggi skor.</p>
+  </article>
+</section>
+
+<p class="center muted">
+  Leaderboard dihitung dari {{ leaderboard_days }} hari terakhir.
+  <a href="/leaderboard">Lihat peringkat →</a>
+</p>
+{% endblock %}

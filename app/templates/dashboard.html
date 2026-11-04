@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Challenge — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <p class="eyebrow">halo, {{ user.name }}</p>
+    <h1>Daftar challenge</h1>
+  </div>
+  <a class="btn ghost" href="/leaderboard">Leaderboard</a>
+</div>
+
+<section class="grid cards">
+  {% for card in cards %}
+    {% set c = card.challenge %}
+    <article class="card state-{{ card.state }}">
+      <div class="card-top">
+        <span class="pill diff-{{ c.difficulty|lower }}">{{ c.difficulty }}</span>
+        <span class="pill">{{ c.points }} poin</span>
+        <span class="pill">{{ c.duration_seconds // 60 }} menit</span>
+      </div>
+      <h2>{{ c.title }}</h2>
+      <p>{{ c.summary }}</p>
+      <div class="card-foot">
+        <span class="badge {{ card.state }}">{{ card.label }}</span>
+        <a class="btn {{ 'primary' if card.state != 'passed' else 'ghost' }}"
+           href="/challenge/{{ c.slug }}">
+          {{ 'Lihat' if card.state == 'passed' else 'Mulai' }}
+        </a>
+      </div>
+    </article>
+  {% endfor %}
+</section>
+{% endblock %}

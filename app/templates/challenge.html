@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ challenge.title }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="challenge"
+     data-challenge="{{ challenge.slug }}"
+     data-remaining="{{ remaining }}"
+     data-active="{{ 'true' if attempt and attempt.status == 'active' else 'false' }}">
+
+  <div class="pagehead">
+    <div>
+      <p class="eyebrow"><a href="/dashboard">← semua challenge</a></p>
+      <h1>{{ challenge.title }}</h1>
+      <div class="card-top">
+        <span class="pill diff-{{ challenge.difficulty|lower }}">{{ challenge.difficulty }}</span>
+        <span class="pill">{{ challenge.points }} poin</span>
+        <span class="pill">{{ challenge.duration_seconds // 60 }} menit</span>
+      </div>
+    </div>
+    {% if attempt and attempt.status == 'active' %}
+      <div class="timer" id="timer" aria-live="polite">--:--</div>
+    {% elif passed_attempt %}
+      <div class="timer done">LULUS</div>
+    {% else %}
+      <div class="timer expired">HABIS</div>
+    {% endif %}
+  </div>
+
+  {% if passed_attempt %}
+    <div class="banner success">
+      <strong>Challenge selesai.</strong> Skor kamu {{ passed_attempt['score'] }} poin.
+      <form method="post" action="/challenge/{{ challenge.slug }}/retry" class="inline">
+        <button class="btn ghost" type="submit">Coba lagi</button>
+      </form>
+    </div>
+  {% endif %}
+
+  {% if attempt and attempt.status == 'expired' %}
+    <div class="banner danger">
+      <strong>Waktu habis.</strong> Skor attempt ini 0.
+      <form method="post" action="/challenge/{{ challenge.slug }}/retry" class="inline">
+        <button class="btn ghost" type="submit">Mulai attempt baru</button>
+      </form>
+    </div>
+  {% endif %}
+
+  <div class="split">
+    <aside class="panel story">
+      <h2>Situasi</h2>
+      <p>{{ challenge.story }}</p>
+
+      <h3>Tujuan</h3>
+      <p>{{ challenge.objective }}</p>
+
+      <details class="hint">
+        <summary>Butuh hint?</summary>
+        <p>{{ challenge.hint }}</p>
+      </details>
+
+      <h3>Alur</h3>
+      <ol class="steps">
+        <li>Perbaiki YAML di editor.</li>
+        <li>Klik <strong>Apply</strong> untuk melihat status pod.</li>
+        <li>Klik <strong>Verifikasi</strong> bila sudah yakin.</li>
+      </ol>
+    </aside>
+
+    <section class="panel editor-panel">
+      <div class="editor-head">
+        <span>manifest.yaml</span>
+        <span class="muted">editor</span>
+      </div>
+      <textarea id="editor" spellcheck="false" {% if passed_attempt %}readonly{% endif %}>{{ editor_value }}</textarea>
+
+      <div class="actions">
+        <button class="btn primary" id="btn-apply" type="button">Apply</button>
+        <button class="btn" id="btn-verify" type="button">Verifikasi</button>
+        <button class="btn ghost" id="btn-reset" type="button">Reset sandbox</button>
+      </div>
+
+      <div class="console-head">output</div>
+      <pre id="console" class="console">$ siap. klik Apply untuk mengirim manifest.</pre>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}

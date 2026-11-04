@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <p class="eyebrow">7 hari terakhir</p>
+    <h1>Leaderboard</h1>
+  </div>
+  <a class="btn ghost" href="{{ '/dashboard' if user else '/' }}">Kembali</a>
+</div>
+
+{% if rows %}
+<table class="board">
+  <thead>
+    <tr><th>#</th><th>Nama</th><th class="num">Skor</th><th class="num">Selesai</th><th>Terakhir</th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr class="{{ 'me' if user and user.name == row.name else '' }}">
+      <td class="rank">{{ loop.index }}</td>
+      <td>{{ row.name }}</td>
+      <td class="num">{{ row.total_score }}</td>
+      <td class="num">{{ row.solved }}</td>
+      <td class="muted">{{ row.last_solved[:16]|replace('T', ' ') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted center">Belum ada yang menyelesaikan challenge dalam {{ leaderboard_days }} hari terakhir.
+  <a href="/">Jadilah yang pertama →</a></p>
+{% endif %}
+{% endblock %}

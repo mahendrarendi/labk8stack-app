@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">k8s<span>lab</span></a>
+    <nav class="nav">
+      {% if user %}
+        <a href="/dashboard">Challenge</a>
+        <a href="/leaderboard">Leaderboard</a>
+        <span class="who" title="login sebagai">{{ user.name }}</span>
+        <form method="post" action="/logout" class="inline">
+          <button type="submit" class="linklike">Keluar</button>
+        </form>
+      {% else %}
+        <a href="/leaderboard">Leaderboard</a>
+      {% endif %}
+      <span class="mode mode-{{ mode }}" title="LAB_MODE">{{ mode }}</span>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="foot">
+    <span>{{ app_name }} &middot; {{ tagline }}</span>
+    {% if mode == 'fake' %}
+      <span class="warn">Mode simulator: tidak ada cluster sungguhan yang tersentuh.</span>
+    {% endif %}
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
