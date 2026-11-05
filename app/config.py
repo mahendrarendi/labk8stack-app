@@ -17,6 +17,10 @@ class Settings:
 
     db_path: Path = Path(os.environ.get("DB_PATH", str(BASE_DIR / "data" / "lab.db")))
 
+    # Kosong = SQLite (db_path). Isi dengan URL PostgreSQL untuk produksi:
+    # postgresql://user:password@host:5432/database
+    database_url: str = os.environ.get("DATABASE_URL", "").strip()
+
     # fake        -> simulator, tidak butuh cluster (default, aman untuk demo)
     # kubernetes  -> membuat namespace + resource asli lewat kubectl
     mode: str = os.environ.get("LAB_MODE", "fake").lower()

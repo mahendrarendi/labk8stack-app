@@ -56,7 +56,7 @@ cluster-admin tanpa impersonation di produksi.
 
 ```bash
 make setup      # buat .venv + install dependensi
-make test       # 33 test
+make test       # 34 test
 make run        # http://localhost:8080
 ```
 
@@ -76,7 +76,26 @@ docker compose up -d --build
 open http://localhost:8080
 ```
 
-SQLite disimpan di volume `platform-data`, jadi skor tidak hilang saat restart.
+Compose menjalankan dua service: `db` (PostgreSQL 17) dan `platform`.
+`DATABASE_URL` dirakit otomatis dari `POSTGRES_DB`, `POSTGRES_USER`, dan
+`POSTGRES_PASSWORD`; datanya disimpan di volume `db-data` sehingga skor tidak
+hilang saat container dibuat ulang. Volume baru berarti database kosong — data
+SQLite lama di `data/lab.db` tidak dimigrasi otomatis.
+
+```bash
+docker compose ps
+docker compose logs -f platform
+docker compose down          # data tetap tersimpan
+docker compose down -v       # hapus database
+```
+
+Tanpa Docker Compose (misalnya `make run`), platform otomatis memakai SQLite di
+`data/lab.db`. Untuk memakai PostgreSQL lokal, isi `DATABASE_URL`:
+
+```bash
+DATABASE_URL=postgresql://k8slab:password@localhost:5432/k8slab \
+  .venv/bin/uvicorn app.main:app --port 8080
+```
 
 ## Akun & leaderboard
 
@@ -86,7 +105,7 @@ SQLite disimpan di volume `platform-data`, jadi skor tidak hilang saat restart.
 - Password disimpan sebagai hash **PBKDF2-HMAC-SHA256** (600.000 iterasi, salt
   acak per user), bukan teks biasa.
 - Tidak ada reset password lewat email. Bila password hilang, hapus user lewat
-  SQLite atau minta admin membuatkan akun baru.
+  database (SQLite/PostgreSQL) atau minta admin membuatkan akun baru.
 - User lama dari versi "nama saja" tidak punya password. Pemiliknya bisa
   memakai **Create account** dengan username yang sama untuk mengklaim akun
   itu satu kali.
@@ -146,7 +165,7 @@ lebih awal.
 ```
 app/
 ├── main.py          # route halaman + API (apply/verify/terminal/reset)
-├── db.py            # SQLite: users, attempts, leaderboard
+├── db.py            # users, attempts, leaderboard (SQLite/PostgreSQL)
 ├── challenges.py    # katalog challenge + validator + simulasi
 ├── sandbox.py       # state in-memory, dipakai editor & terminal
 ├── terminal.py      # interpreter perintah kubectl (mode fake)
@@ -159,7 +178,7 @@ app/
 └── static/          # CSS + JS (tanpa framework)
 deploy/rbac.yaml     # ServiceAccount + ClusterRole untuk mode cluster
 docs/real-cluster.md # panduan connect ke cluster asli
-tests/               # pytest (33 test)
+tests/               # pytest (34 test)
 ```
 
 ## Terminal
@@ -206,7 +225,8 @@ daftar aman ditolak.
 - Mode `kubernetes` memberi platform izin ke cluster. Isolasi per user ditegakkan
   RBAC + impersonation per namespace (lihat `docs/real-cluster.md`).
 - Terminal mode `fake` lengkap; mode `kubernetes` memakai kubectl asli.
-- Leaderboard memakai SQLite; untuk multi-replica perlu Postgres.
+- Database: SQLite untuk lokal/test, PostgreSQL untuk Docker Compose dan
+  produksi. Keduanya didukung tanpa mengubah kode.
 
 ## Roadmap
 
@@ -215,4 +235,4 @@ daftar aman ditolak.
 2. Verifikasi berbasis kondisi cluster (bukan hanya isi YAML).
 3. Kubeconfig/token sementara per user untuk `kubectl` dari terminal sendiri.
 4. Reset otomatis namespace kedaluwarsa (cron/TTL).
-5. Postgres + leaderboard per-minggu kalender.
+5. Leaderboard per-minggu kalender dan arsip musim.

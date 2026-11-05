@@ -101,6 +101,16 @@ def test_login_for_unknown_user_is_rejected(client):
     assert "No account with that username" in response.text
 
 
+def test_login_is_case_insensitive(client):
+    name = f"Case-{uuid.uuid4().hex[:8]}"
+    join(client, name)
+    client.post("/logout", follow_redirects=False)
+
+    response = login(client, name.lower())
+    assert response.status_code == 303
+    assert client.get("/dashboard").status_code == 200
+
+
 def test_sign_in_again_keeps_leaderboard_score(client):
     name = join(client)
     client.get("/challenge/image-pull-backoff")
