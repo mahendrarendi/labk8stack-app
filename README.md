@@ -42,9 +42,12 @@ Singkatnya:
 kubectl apply -f deploy/rbac.yaml          # SA + ClusterRole
 LAB_MODE=kubernetes \
 LAB_KUBECONFIG=$HOME/.kube/config \
-LAB_APP_IMAGE=ghcr.io/<owner>/k8s-lab-app:0.1.0 \
 .venv/bin/uvicorn app.main:app --port 8080
 ```
+
+Image challenge, `SECRET_KEY`, dan pengaturan lain dibaca dari
+`k8s-lab-platform/.env` (lihat `.env.example`). File itu dipakai oleh uvicorn
+lokal maupun Docker Compose, jadi tidak perlu diekspor ulang di command line.
 
 Setiap user mendapat namespace `lab-u<id>-<slug>`, ServiceAccount `lab-runner`, dan
 RoleBinding ke ClusterRole `lab-user`. Semua perintah dijalankan dengan

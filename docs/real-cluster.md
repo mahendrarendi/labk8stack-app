@@ -72,9 +72,10 @@ kubectl -n k8s-lab-system get sa
 
 ## 3. Siapkan image aplikasi
 
-Semua manifest challenge memakai `LAB_APP_IMAGE`. Default-nya masih placeholder
-`ghcr.io/change-me-owner/k8s-lab-app`, yang **tidak akan bisa di-pull** sampai
-Anda push image sendiri.
+Semua manifest challenge memakai `LAB_APP_IMAGE` dari
+`k8s-lab-platform/.env` — satu-satunya tempat konfigurasi image. Default di
+kode hanyalah placeholder `ghcr.io/change-me-owner/k8s-lab-app`, yang **tidak
+akan bisa di-pull** sampai Anda push image sendiri.
 
 ```bash
 cd ../k8s-lab-app
@@ -82,9 +83,9 @@ docker build -t ghcr.io/<owner>/k8s-lab-app:0.1.0 .
 docker push ghcr.io/<owner>/k8s-lab-app:0.1.0
 ```
 
-Lalu set:
+Lalu edit `k8s-lab-platform/.env`:
 
-```bash
+```env
 LAB_APP_IMAGE=ghcr.io/<owner>/k8s-lab-app:0.1.0
 LAB_APP_GOOD_TAGS=0.1.0,v0.1.0,latest
 ```
@@ -96,10 +97,11 @@ LAB_APP_GOOD_TAGS=0.1.0,v0.1.0,latest
 
 Sebelum image `k8s-lab-app` tersedia, mode cluster masih bisa dipakai dengan
 image HTTP generik. Yang diuji di sini: `registry.k8s.io/echoserver:1.10`
-(listen di `:8080`, semua path termasuk `/healthz` membalas 200):
+(listen di `:8080`, semua path termasuk `/healthz` membalas 200).
+Set di `.env`:
 
-```bash
-LAB_APP_IMAGE=registry.k8s.io/echoserver:1.10 \
+```env
+LAB_APP_IMAGE=registry.k8s.io/echoserver:1.10
 LAB_APP_GOOD_TAGS=1.10,latest
 ```
 
@@ -123,22 +125,18 @@ menyajikan `/healthz`, dan cukup berat untuk benar-benar OOM di 32Mi.
 
 ## 4. Jalankan platform
 
-Di luar cluster:
+Di luar cluster (image & `SECRET_KEY` sudah ada di `.env`):
 
 ```bash
 LAB_MODE=kubernetes \
 LAB_KUBECONFIG=$HOME/.kube/config \
-LAB_APP_IMAGE=ghcr.io/<owner>/k8s-lab-app:0.1.0 \
-LAB_APP_GOOD_TAGS=0.1.0,v0.1.0,latest \
-SECRET_KEY="$(openssl rand -hex 32)" \
 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
-Atau dengan Docker Compose (mount kubeconfig read-only):
+Atau dengan Docker Compose (image dari `.env`, mount kubeconfig read-only):
 
 ```bash
 LAB_MODE=kubernetes LAB_KUBECONFIG=/kube/config \
-LAB_APP_IMAGE=ghcr.io/<owner>/k8s-lab-app:0.1.0 \
 docker compose up -d
 ```
 
@@ -229,7 +227,7 @@ kubectl label namespace lab-u<id>-<slug> \
 |---|---|
 | `forbidden: cannot impersonate resource` | ClusterRole `lab-provisioner` belum di-bind ke identitas platform |
 | `forbidden` saat membuat RoleBinding | provisioner tidak punya `bind` pada ClusterRole `lab-user` |
-| `ImagePullBackOff` di semua challenge | `LAB_APP_IMAGE` masih placeholder atau node tidak bisa akses registry |
+| `ImagePullBackOff` di semua challenge | `LAB_APP_IMAGE` di `.env` masih placeholder atau node tidak bisa akses registry |
 | `namespace is being terminated` | jarang terjadi; platform menunggu namespace selesai dihapus sebelum dipakai lagi |
 | Reset terasa lama | namespace baru sedang dibuat; setelah attempt pertama, reset hanya menghapus resource (cepat) |
 | `LAB_MODE=kubernetes but the 'kubectl' binary is missing` | install `kubectl` di image/container platform |

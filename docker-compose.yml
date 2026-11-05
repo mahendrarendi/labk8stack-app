@@ -25,6 +25,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # .env adalah satu-satunya tempat konfigurasi image challenge.
+    env_file:
+      - .env
     environment:
       SECRET_KEY: ${SECRET_KEY:-dev-insecure-change-me}
       DATABASE_URL: postgresql://${POSTGRES_USER:-k8slab}:${POSTGRES_PASSWORD:-change-me-in-production}@db:5432/${POSTGRES_DB:-k8slab}
@@ -33,8 +36,6 @@ services:
       LAB_IMPERSONATE: ${LAB_IMPERSONATE:-true}
       LAB_RUNNER_SA: ${LAB_RUNNER_SA:-lab-runner}
       LAB_RUNNER_CLUSTERROLE: ${LAB_RUNNER_CLUSTERROLE:-lab-user}
-      LAB_APP_IMAGE: ${LAB_APP_IMAGE:-ghcr.io/change-me-owner/k8s-lab-app:0.1.0}
-      LAB_APP_GOOD_TAGS: ${LAB_APP_GOOD_TAGS:-0.1.0,v0.1.0,latest}
       LEADERBOARD_DAYS: ${LEADERBOARD_DAYS:-7}
     # Untuk mode kubernetes di luar cluster, mount kubeconfig read-only:
     # tambahkan

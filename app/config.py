@@ -5,7 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Muat k8s-lab-platform/.env untuk pemakaian lokal (uvicorn). Docker Compose
+# membaca file yang sama untuk interpolasi dan meneruskan nilainya ke container.
+# Environment yang sudah diset (misalnya dari systemd/CI) selalu menang.
+load_dotenv(os.environ.get("LAB_ENV_FILE", str(BASE_DIR / ".env")), override=False)
 
 
 class Settings:
