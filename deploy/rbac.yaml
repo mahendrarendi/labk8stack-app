@@ -32,29 +32,23 @@ metadata:
   name: lab-user
 rules:
   - apiGroups: [""]
-    resources:
-      - pods
-      - pods/log
-      - services
-      - endpoints
-      - configmaps
-      - secrets
-      - serviceaccounts
-      - persistentvolumeclaims
-      - events
+    resources: ["pods", "services", "endpoints", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["batch"]
-    resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "networkpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
 ---
 # Identitas platform: hanya boleh mengelola namespace lab dan me-rebind
 # ServiceAccount peserta. Tidak bisa membaca Secret aplikasi user.
@@ -72,14 +66,18 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Wajib agar RoleBinding ke ClusterRole lab-user diizinkan.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
     resourceNames: ["lab-user"]
     verbs: ["bind"]
-  # Wajib untuk --as=system:serviceaccount:<ns>:lab-runner
+  # Batasi impersonation ke ServiceAccount lab-runner saja.
   - apiGroups: [""]
-    resources: ["serviceaccounts", "users", "groups"]
+    resources: ["serviceaccounts"]
+    resourceNames: ["lab-runner"]
     verbs: ["impersonate"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

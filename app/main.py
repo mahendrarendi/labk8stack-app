@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import asyncio
+import hashlib
+import logging
 
 import yaml
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -25,11 +28,47 @@ from .security import (
     verify_password,
 )
 
+ADVANCED_HINTS = {
+    "image-pull-backoff": "Compare the image tag with a tag that exists in your registry.",
+    "service-no-endpoints": "Compare Service selectors with the labels on Ready Pods.",
+    "pending-resources": "Read Pod scheduling events and compare requests with node capacity.",
+    "command-override": "Inspect the container command and its previous logs.",
+    "oom-killed": "Inspect the container's last termination reason and memory limit.",
+    "readiness-probe": "Compare the probe path with the application's health endpoint.",
+    "port-env": "Compare the PORT environment variable with the readiness probe port.",
+    "service-target-port": "Compare endpoint ports with the Service targetPort.",
+    "deployment-selector": "A Deployment selector must match the Pod template labels.",
+    "deployment-paused": "Inspect spec.paused and rollout status.",
+}
+
+logger = logging.getLogger(__name__)
+
+
+async def cleanup_loop():
+    from .cleanup import main as cleanup_main
+
+    while True:
+        await asyncio.sleep(15 * 60)
+        try:
+            await asyncio.to_thread(cleanup_main, ["--apply"])
+        except Exception:
+            logger.exception("sandbox cleanup failed")
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    db.init_db()
-    yield
+    task = None
+    if settings.mode == "kubernetes" and settings.auto_cleanup:
+        task = asyncio.create_task(cleanup_loop())
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -54,8 +93,15 @@ async def no_store(request: Request, call_next):
 
 
 def current_user(request: Request):
+    if hasattr(request.state, "user"):
+        return request.state.user
     user_id = read_user_id(request.cookies.get(COOKIE_NAME))
-    return db.get_user(user_id) if user_id else None
+    user = db.get_user(user_id) if user_id else None
+    if user:
+        # Throttled di dalam db.touch_user (default 5 menit).
+        db.touch_user(user["id"])
+    request.state.user = user
+    return user
 
 
 def render(request: Request, template: str, **context):
@@ -106,69 +152,44 @@ def join(
     intent: str = Form("login"),
 ):
     clean = " ".join(name.split())
+    auth_mode = "register" if intent == "register" else "login"
+
+    def auth_error(message: str):
+        return render(
+            request,
+            "index.html",
+            error=message,
+            name_value=clean,
+            auth_mode=auth_mode,
+        )
+
     if not (2 <= len(clean) <= 40):
-        return render(
-            request,
-            "index.html",
-            error="Username must be 2-40 characters.",
-            name_value=clean,
-        )
+        return auth_error("Username must be 2-40 characters.")
     if not (6 <= len(password) <= 128):
-        return render(
-            request,
-            "index.html",
-            error="Password must be 6-128 characters.",
-            name_value=clean,
-        )
+        return auth_error("Password must be 6-128 characters.")
 
     user = db.get_user_by_name(clean)
 
     if intent == "register":
         if user is not None and user["password_hash"]:
-            return render(
-                request,
-                "index.html",
-                error="That username is already taken. Sign in instead.",
-                name_value=clean,
-            )
+            return auth_error("That username is already taken. Sign in instead.")
         if user is None:
             user = db.create_user(clean, hash_password(password))
             if user is None:
-                return render(
-                    request,
-                    "index.html",
-                    error="That username was just taken. Pick another one.",
-                    name_value=clean,
-                )
+                return auth_error("That username was just taken. Pick another one.")
         else:
             # Akun lama (dibuat sebelum password wajib) diklaim sekali di sini.
             db.set_password(user["id"], hash_password(password))
             user = db.get_user(user["id"])
     else:
         if user is None:
-            return render(
-                request,
-                "index.html",
-                error="No account with that username. Use Create account first.",
-                name_value=clean,
-            )
+            return auth_error("No account with that username. Use Create account first.")
         if not user["password_hash"]:
-            return render(
-                request,
-                "index.html",
-                error=(
-                    "This account has no password yet. "
-                    "Use Create account to set one."
-                ),
-                name_value=clean,
+            return auth_error(
+                "This account has no password yet. Use Create account to set one."
             )
         if not verify_password(password, user["password_hash"]):
-            return render(
-                request,
-                "index.html",
-                error="Incorrect password for that username.",
-                name_value=clean,
-            )
+            return auth_error("Incorrect password for that username.")
 
     response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(
@@ -176,6 +197,7 @@ def join(
         sign_user(user["id"]),
         max_age=settings.session_max_age,
         httponly=True,
+        secure=settings.cookie_secure,
         samesite="lax",
         path="/",
     )
@@ -185,7 +207,7 @@ def join(
 @app.post("/logout")
 def logout():
     response = RedirectResponse("/", status_code=303)
-    response.delete_cookie(COOKIE_NAME, path="/")
+    response.delete_cookie(COOKIE_NAME, path="/", secure=settings.cookie_secure, samesite="lax")
     return response
 
 
@@ -229,13 +251,26 @@ def challenge_page(request: Request, slug: str):
         latest = db.latest_attempt(user["id"], slug)
         if latest and latest["status"] == "passed":
             passed_attempt = latest
-        elif latest is None or latest["status"] == "expired":
+        elif latest is None:
             # A new attempt always starts from a clean sandbox. In kubernetes
             # mode this namespace has to be created before the page loads.
-            get_engine().reset(user["id"], challenge)
+            reset_result = get_engine().reset(user["id"], challenge)
+            if not reset_result.ok:
+                get_engine().release(user["id"], challenge)
+                return render(request, "challenge.html", challenge=challenge,
+                              attempt=None, remaining=0, passed_attempt=None,
+                              editor_value=challenge.broken_yaml,
+                              setup_error=reset_result.output)
             attempt = db.start_attempt(user["id"], slug)
         else:
             attempt = latest
+
+    if attempt and attempt["status"] == "active" and seconds_left(
+        attempt["started_at"], challenge.duration_seconds
+    ) <= 0:
+        db.finish_attempt(attempt["id"], "expired", 0)
+        get_engine().release(user["id"], challenge)
+        attempt = db.latest_attempt(user["id"], slug)
 
     remaining = (
         seconds_left(attempt["started_at"], challenge.duration_seconds)
@@ -250,6 +285,9 @@ def challenge_page(request: Request, slug: str):
         remaining=remaining,
         passed_attempt=passed_attempt,
         editor_value=challenge.broken_yaml,
+        advanced_hint=ADVANCED_HINTS.get(slug),
+        setup_error=("Sandbox reset failed. Please retry shortly."
+                     if request.query_params.get("setup_error") else None),
     )
 
 
@@ -260,7 +298,9 @@ def retry(request: Request, slug: str):
         return RedirectResponse("/", status_code=303)
     challenge = get_challenge(slug)
     if challenge:
-        get_engine().reset(user["id"], challenge)
+        reset_result = get_engine().reset(user["id"], challenge)
+        if not reset_result.ok:
+            return RedirectResponse(f"/challenge/{slug}?setup_error=1", status_code=303)
         db.start_attempt(user["id"], slug)
     return RedirectResponse(f"/challenge/{slug}", status_code=303)
 
@@ -274,6 +314,35 @@ def leaderboard(request: Request):
 @app.get("/healthz")
 def healthz():
     return {"status": "ok", "mode": settings.mode}
+
+
+@app.get("/readyz")
+def readyz():
+    try:
+        with db.get_db() as connection:
+            connection.execute("SELECT 1")
+    except Exception:
+        return JSONResponse({"status": "database unavailable"}, status_code=503)
+    return {"status": "ready"}
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics():
+    try:
+        with db.get_db() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM attempts GROUP BY status"
+            ).fetchall()
+    except Exception:
+        return PlainTextResponse("database unavailable\n", status_code=503)
+    counts = {row["status"]: row["count"] for row in rows}
+    lines = [
+        "# HELP k8s_lab_attempts Number of attempts by status.",
+        "# TYPE k8s_lab_attempts gauge",
+    ]
+    for status in ("active", "passed", "expired"):
+        lines.append(f'k8s_lab_attempts{{status="{status}"}} {counts.get(status, 0)}')
+    return "\n".join(lines) + "\n"
 
 
 # -------------------------------------------------------------------- api
@@ -295,12 +364,19 @@ def api_apply(request: Request, slug: str, body: SubmitBody):
     challenge = get_challenge(slug)
     if challenge is None:
         return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
+    attempt = db.active_attempt(user["id"], slug)
+    if attempt is None:
+        return JSONResponse({"ok": False, "output": "No active attempt."}, status_code=409)
 
     document, parse_error = parse_document(body.yaml)
     if parse_error:
         return JSONResponse({"ok": False, "output": f"error: {parse_error}"}, status_code=400)
 
     result = get_engine().apply(user["id"], challenge, document)
+    if result.ok:
+        db.set_applied_manifest_hash(
+            attempt["id"], hashlib.sha256(body.yaml.encode("utf-8")).hexdigest()
+        )
     return JSONResponse({"ok": result.ok, "output": result.output})
 
 
@@ -312,6 +388,8 @@ def api_terminal(request: Request, slug: str, body: CommandBody):
     challenge = get_challenge(slug)
     if challenge is None:
         return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
+    if db.active_attempt(user["id"], slug) is None:
+        return JSONResponse({"output": "No active attempt."}, status_code=409)
 
     command = body.command.strip()
     if len(command) > 400:
@@ -331,6 +409,24 @@ def api_verify(request: Request, slug: str, body: SubmitBody):
         return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
 
     engine = get_engine()
+    attempt = db.active_attempt(user["id"], slug)
+    if attempt is None:
+        return JSONResponse(
+            {"passed": False, "message": "No active attempt. Reload the page."},
+            status_code=409,
+        )
+
+    remaining = seconds_left(attempt["started_at"], challenge.duration_seconds)
+    if remaining <= 0:
+        db.finish_attempt(attempt["id"], "expired", 0)
+        engine.release(user["id"], challenge)
+        return JSONResponse(
+            {
+                "passed": False,
+                "expired": True,
+                "message": "Time is up. This attempt scores 0.",
+            }
+        )
 
     if body.source == "terminal":
         document = engine.current(user["id"], challenge)
@@ -348,34 +444,25 @@ def api_verify(request: Request, slug: str, body: SubmitBody):
             return JSONResponse(
                 {"passed": False, "message": f"error: {parse_error}"}, status_code=400
             )
-        # The editor behaves like `kubectl apply`: state changes before checking.
-        applied = engine.apply(user["id"], challenge, document)
-        if not applied.ok:
+        submitted_hash = hashlib.sha256(body.yaml.encode("utf-8")).hexdigest()
+        if attempt["applied_manifest_hash"] != submitted_hash:
             return JSONResponse(
-                {"passed": False, "message": applied.output}, status_code=200
+                {"passed": False,
+                 "message": "Apply the current manifest before verifying it."},
+                status_code=409,
             )
-        document = engine.current(user["id"], challenge) or document
-
-    attempt = db.active_attempt(user["id"], slug)
-    if attempt is None:
-        return JSONResponse(
-            {"passed": False, "message": "No active attempt. Reload the page."},
-            status_code=409,
-        )
-
-    remaining = seconds_left(attempt["started_at"], challenge.duration_seconds)
-    if remaining <= 0:
-        db.finish_attempt(attempt["id"], "expired", 0)
-        return JSONResponse(
-            {
-                "passed": False,
-                "expired": True,
-                "message": "Time is up. This attempt scores 0.",
-            },
-            status_code=200,
-        )
+        document = engine.current(user["id"], challenge)
+        if document is None:
+            return JSONResponse(
+                {"passed": False, "message": "Applied resource could not be read back."},
+                status_code=409,
+            )
 
     passed, message = challenge.validate(document)
+    if passed:
+        passed, health_message = engine.check(user["id"], challenge)
+        if not passed:
+            message = f"Manifest looks correct, but the cluster is not healthy: {health_message}"
     tries = db.record_try(attempt["id"])
 
     if passed:
@@ -384,6 +471,7 @@ def api_verify(request: Request, slug: str, body: SubmitBody):
             challenge.points, challenge.duration_seconds, elapsed, tries
         )
         db.finish_attempt(attempt["id"], "passed", score)
+        engine.release(user["id"], challenge)
         return JSONResponse(
             {
                 "passed": True,
@@ -412,5 +500,11 @@ def api_reset(request: Request, slug: str):
     challenge = get_challenge(slug)
     if challenge is None:
         return JSONResponse({"ok": False, "output": "Challenge not found."}, status_code=404)
+    if db.active_attempt(user["id"], slug) is None:
+        return JSONResponse({"ok": False, "output": "No active attempt."}, status_code=409)
     result = get_engine().reset(user["id"], challenge)
+    if result.ok:
+        attempt = db.active_attempt(user["id"], slug)
+        if attempt is not None:
+            db.set_applied_manifest_hash(attempt["id"], None)
     return JSONResponse({"ok": result.ok, "output": result.output})

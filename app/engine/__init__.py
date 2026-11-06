@@ -29,6 +29,14 @@ class Engine:
     def terminal(self, user_id: int, challenge: Challenge, command: str) -> str:
         raise NotImplementedError
 
+    def check(self, user_id: int, challenge: Challenge) -> tuple[bool, str]:
+        """Check live workload health after the challenge-specific spec check."""
+        raise NotImplementedError
+
+    def release(self, user_id: int, challenge: Challenge) -> ApplyResult:
+        """Remove resources after a completed attempt."""
+        raise NotImplementedError
+
 
 def get_engine() -> Engine:
     if settings.mode == "kubernetes":

@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">k8s<span>lab</span></a>
+    <a class="brand" href="/">Lab<span>K8</span>stack</a>
     <nav class="nav">
       {% if user %}
         <a href="/dashboard">Challenges</a>
@@ -29,12 +29,12 @@
   </main>
 
   <footer class="foot">
-    <span>{{ app_name }} &middot; {{ tagline }}</span>
-    {% if mode == 'fake' %}
-      <span class="warn">Simulator mode: no real cluster is touched.</span>
-    {% endif %}
+    <span>&copy; 2026 LabK8stack</span>
   </footer>
 
+  <script src="/static/app.js" defer></script>
+  <script src="/static/landing.js" defer></script>
+  <script src="/static/navigation.js" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

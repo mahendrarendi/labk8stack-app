@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import cleanup, db
 from app.challenges import (
     CHALLENGES,
     COMMAND_BROKEN,
@@ -22,7 +24,7 @@ from app.main import app
 
 @pytest.fixture()
 def client():
-    # TestClient sebagai context manager menjalankan lifespan (init_db).
+    db.init_db()
     with TestClient(app) as test_client:
         yield test_client
 
@@ -52,6 +54,12 @@ def login(client: TestClient, name: str, password: str = PASSWORD):
         data={"name": name, "password": password, "intent": "login"},
         follow_redirects=False,
     )
+
+
+def verify_editor(client: TestClient, slug: str, manifest: str):
+    applied = client.post(f"/api/challenge/{slug}/apply", json={"yaml": manifest})
+    assert applied.json()["ok"] is True
+    return client.post(f"/api/challenge/{slug}/verify", json={"yaml": manifest})
 
 
 def test_landing_page(client):
@@ -115,9 +123,7 @@ def test_sign_in_again_keeps_leaderboard_score(client):
     name = join(client)
     client.get("/challenge/image-pull-backoff")
     fixed = IMAGE_BROKEN.replace("0.0.3", "0.1.0")
-    assert client.post(
-        "/api/challenge/image-pull-backoff/verify", json={"yaml": fixed}
-    ).json()["passed"] is True
+    assert verify_editor(client, "image-pull-backoff", fixed).json()["passed"] is True
 
     client.post("/logout", follow_redirects=False)
     response = login(client, name)
@@ -143,10 +149,7 @@ def test_apply_broken_image_shows_pull_error(client):
 def test_verify_fails_for_broken_manifest(client):
     join(client)
     client.get("/challenge/image-pull-backoff")
-    response = client.post(
-        "/api/challenge/image-pull-backoff/verify",
-        json={"yaml": IMAGE_BROKEN},
-    )
+    response = verify_editor(client, "image-pull-backoff", IMAGE_BROKEN)
     payload = response.json()
     assert payload["passed"] is False
     assert payload["tries"] == 1
@@ -157,10 +160,7 @@ def test_verify_passes_after_fix_and_scores(client):
     client.get("/challenge/image-pull-backoff")
 
     fixed = IMAGE_BROKEN.replace("0.0.3", "0.1.0")
-    response = client.post(
-        "/api/challenge/image-pull-backoff/verify",
-        json={"yaml": fixed},
-    )
+    response = verify_editor(client, "image-pull-backoff", fixed)
     payload = response.json()
     assert payload["passed"] is True
     assert 20 <= payload["score"] <= CHALLENGES["image-pull-backoff"].points
@@ -169,19 +169,52 @@ def test_verify_passes_after_fix_and_scores(client):
     assert name in board.text
 
 
+def test_verify_requires_the_current_manifest_to_be_applied(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    fixed = IMAGE_BROKEN.replace("0.0.3", "0.1.0")
+
+    unsent = client.post(
+        "/api/challenge/image-pull-backoff/verify", json={"yaml": fixed}
+    )
+    assert unsent.status_code == 409
+    assert "Apply" in unsent.json()["message"]
+
+    applied = client.post(
+        "/api/challenge/image-pull-backoff/apply", json={"yaml": fixed}
+    )
+    assert applied.json()["ok"] is True
+    changed_after_apply = client.post(
+        "/api/challenge/image-pull-backoff/verify", json={"yaml": fixed + "\n"}
+    )
+    assert changed_after_apply.status_code == 409
+    assert client.post(
+        "/api/challenge/image-pull-backoff/verify", json={"yaml": fixed}
+    ).json()["passed"] is True
+
+
+def test_reset_lab_requires_a_new_apply(client):
+    join(client)
+    client.get("/challenge/image-pull-backoff")
+    fixed = IMAGE_BROKEN.replace("0.0.3", "0.1.0")
+    assert client.post(
+        "/api/challenge/image-pull-backoff/apply", json={"yaml": fixed}
+    ).json()["ok"] is True
+    assert client.post("/api/challenge/image-pull-backoff/reset").json()["ok"] is True
+    assert client.post(
+        "/api/challenge/image-pull-backoff/verify", json={"yaml": fixed}
+    ).status_code == 409
+
+
 def test_service_challenge_validator(client):
     join(client)
     client.get("/challenge/service-no-endpoints")
 
     broken = CHALLENGES["service-no-endpoints"].broken_yaml
-    assert client.post(
-        "/api/challenge/service-no-endpoints/verify", json={"yaml": broken}
-    ).json()["passed"] is False
+    assert verify_editor(client, "service-no-endpoints", broken).json()["passed"] is False
 
     fixed = broken.replace("app: web-v2", "app: web")
-    payload = client.post(
-        "/api/challenge/service-no-endpoints/verify", json={"yaml": fixed}
-    ).json()
+    payload = verify_editor(client, "service-no-endpoints", fixed).json()
     assert payload["passed"] is True
 
 
@@ -189,16 +222,12 @@ def test_pending_challenge_validator(client):
     join(client)
     client.get("/challenge/pending-resources")
     broken = CHALLENGES["pending-resources"].broken_yaml
-    assert client.post(
-        "/api/challenge/pending-resources/verify", json={"yaml": broken}
-    ).json()["passed"] is False
+    assert verify_editor(client, "pending-resources", broken).json()["passed"] is False
 
     fixed = broken.replace('cpu: "8"', 'cpu: "100m"').replace(
         'memory: "16Gi"', 'memory: "128Mi"'
     )
-    assert client.post(
-        "/api/challenge/pending-resources/verify", json={"yaml": fixed}
-    ).json()["passed"] is True
+    assert verify_editor(client, "pending-resources", fixed).json()["passed"] is True
 
 
 def test_invalid_yaml_is_rejected(client):
@@ -338,9 +367,7 @@ def test_command_override_fixed_from_editor(client):
     fixed = COMMAND_BROKEN.replace(
         "          command:\n            - python3\n            - server.py\n", ""
     )
-    payload = client.post(
-        "/api/challenge/command-override/verify", json={"yaml": fixed}
-    ).json()
+    payload = verify_editor(client, "command-override", fixed).json()
     assert payload["passed"] is True
 
 
@@ -368,9 +395,7 @@ def test_readiness_probe_fixed_by_path(client):
     assert "Readiness probe failed" in describe
 
     fixed = READINESS_BROKEN.replace("path: /health\n", "path: /healthz\n")
-    assert client.post(
-        "/api/challenge/readiness-probe/verify", json={"yaml": fixed}
-    ).json()["passed"] is True
+    assert verify_editor(client, "readiness-probe", fixed).json()["passed"] is True
 
 
 def test_port_env_fix_via_terminal_set_env(client):
@@ -392,9 +417,7 @@ def test_target_port_fixed_in_manifest(client):
     client.get("/challenge/service-target-port")
 
     fixed = TARGET_PORT_BROKEN.replace("targetPort: 8081", "targetPort: 8080")
-    assert client.post(
-        "/api/challenge/service-target-port/verify", json={"yaml": fixed}
-    ).json()["passed"] is True
+    assert verify_editor(client, "service-target-port", fixed).json()["passed"] is True
 
 
 def test_selector_manifest_is_rejected_by_apply(client):
@@ -408,9 +431,7 @@ def test_selector_manifest_is_rejected_by_apply(client):
     assert "does not match" in response.json()["output"]
 
     fixed = SELECTOR_BROKEN.replace("app: web-api", "app: web")
-    assert client.post(
-        "/api/challenge/deployment-selector/verify", json={"yaml": fixed}
-    ).json()["passed"] is True
+    assert verify_editor(client, "deployment-selector", fixed).json()["passed"] is True
 
 
 def test_paused_rollout_resumed_via_terminal(client):
@@ -512,3 +533,46 @@ def test_manifest_with_disallowed_kind_is_rejected(client):
     )
     assert response.status_code == 400
     assert "not allowed" in response.json()["output"]
+
+
+# --------------------------------------------------- cleanup / last_seen
+
+def test_last_seen_is_recorded_on_activity(client):
+    name = join(client)
+    client.get("/dashboard")
+
+    user = db.get_user_by_name(name)
+    assert user["last_seen"] is not None
+
+
+def test_idle_users_includes_only_old_activity(client):
+    old_name = join(client)
+    new_name = join(client)
+
+    old = db.get_user_by_name(old_name)
+    new = db.get_user_by_name(new_name)
+    with db.get_db() as connection:
+        connection.execute(
+            "UPDATE users SET last_seen = %s WHERE id = %s",
+            (db.iso(db.utcnow() - timedelta(days=40)), old["id"]),
+        )
+
+    idle_ids = {row["id"] for row in db.idle_users(30)}
+    assert old["id"] in idle_ids
+    assert new["id"] not in idle_ids
+
+
+def test_cleanup_plan_separates_idle_and_orphan():
+    plan = cleanup.plan_cleanup(
+        ["lab-u1-a", "lab-u2-b", "lab-u99-c", "other"],
+        known_user_ids={1, 2},
+        selected_user_ids={1},
+    )
+    assert plan == {
+        "idle": ["lab-u1-a"],
+        "orphan": ["lab-u99-c"],
+    }
+
+
+def test_cleanup_refuses_to_run_in_fake_mode():
+    assert cleanup.main([]) == 2

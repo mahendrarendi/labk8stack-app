@@ -1,4 +1,4 @@
-# k8s-lab-platform
+# LabK8stack
 
 Platform latihan Kubernetes bergaya KodeKloud: user memasukkan nama, memilih
 challenge, lalu **memperbaiki manifest yang sengaja dirusak** lewat editor YAML
@@ -14,7 +14,7 @@ sendiri lewat `kubectl`.
 ```
 buka web → isi nama → pilih challenge
    → server membuat sandbox + manifest rusak, timer mulai
-   → user edit YAML → Apply (lihat status ala kubectl) → Verifikasi
+   → user edit YAML → Apply (wajib) → Verifikasi kondisi sandbox
    → lulus: skor = f(sisa waktu, jumlah percobaan)
    → leaderboard 7 hari terakhir
 ```
@@ -27,9 +27,19 @@ buka web → isi nama → pilih challenge
 - **10 challenge** nyata dengan validator masing-masing
 - **Dua cara menyelesaikan**, bisa dicampur karena berbagi satu sandbox:
   - **Manifest editor** — edit YAML, Apply, lihat output ala `kubectl`
-  - **Terminal** — imperative: `kubectl get/describe/logs`, `set image`, `set env`, `set resources`, `scale`, `rollout status|resume|pause`, `delete pod`, `create deployment`
+  - **Terminal bergaya konsol** — banner LabK8stack, prompt, riwayat ↑/↓,
+    `help`, `clear`, dan Ctrl+L. Perintah `kubectl` tetap dibatasi ke sandbox
+    challenge: `get/describe/logs`, `set image`, `set env`, `set resources`,
+    `scale`, `rollout status|resume|pause`, `delete pod`, `create deployment`.
+- Verify dari editor menolak perubahan yang belum di-Apply; Reset Lab ada di
+  bagian atas challenge dan mengosongkan status Apply.
+- Navigasi halaman, login, logout, dan retry memakai perpindahan tanpa reload
+  browser; draft manifest tetap tersimpan selama sesi browser.
 - Timer per attempt, skor menurun seiring waktu & percobaan
 - Leaderboard **rolling 7 hari**
+- Sandbox cluster dihapus setelah selesai; attempt terbengkalai dibersihkan
+  oleh CronJob berdasarkan anotasi masa berlaku
+- `/readyz` untuk kesiapan database dan `/metrics` untuk jumlah attempt
 - Dua mode engine: `fake` (simulator) dan `kubernetes` (kubectl asli per namespace)
 
 ## Mode cluster asli (`LAB_MODE=kubernetes`)
@@ -59,7 +69,7 @@ cluster-admin tanpa impersonation di produksi.
 
 ```bash
 make setup      # buat .venv + install dependensi
-make test       # 34 test
+make test       # seluruh test platform
 make run        # http://localhost:8080
 ```
 
@@ -76,28 +86,45 @@ python3 -m venv .venv
 ```bash
 cp .env.example .env
 docker compose up -d --build
-open http://localhost:8080
+open http://localhost
 ```
 
-Compose menjalankan dua service: `db` (PostgreSQL 17) dan `platform`.
+Compose menjalankan tiga service: `db` (PostgreSQL 17), `platform`, dan `nginx`.
+Nginx meneruskan request dari `NGINX_PORT` (default 80) ke platform:8080 pada
+jaringan Compose. Port platform langsung hanya dibuka pada localhost:8080.
 `DATABASE_URL` dirakit otomatis dari `POSTGRES_DB`, `POSTGRES_USER`, dan
-`POSTGRES_PASSWORD`; datanya disimpan di volume `db-data` sehingga skor tidak
-hilang saat container dibuat ulang. Volume baru berarti database kosong — data
-SQLite lama di `data/lab.db` tidak dimigrasi otomatis.
+`POSTGRES_PASSWORD`; data akun dan skor disimpan di volume `db-data` sehingga
+tetap ada saat container dibuat ulang. Volume baru berarti database kosong.
 
 ```bash
 docker compose ps
 docker compose logs -f platform
+docker compose logs -f nginx
 docker compose down          # data tetap tersimpan
 docker compose down -v       # hapus database
 ```
 
-Tanpa Docker Compose (misalnya `make run`), platform otomatis memakai SQLite di
-`data/lab.db`. Untuk memakai PostgreSQL lokal, isi `DATABASE_URL`:
+Tanpa Docker Compose, set `DATABASE_URL` ke PostgreSQL yang sudah berjalan.
+`make run` dan `make serve` menjalankan migrasi sebelum web server. Untuk
+menjalankan secara manual:
 
 ```bash
 DATABASE_URL=postgresql://k8slab:password@localhost:5432/k8slab \
+  .venv/bin/python -m app.migrate
+DATABASE_URL=postgresql://k8slab:password@localhost:5432/k8slab \
   .venv/bin/uvicorn app.main:app --port 8080
+```
+
+Migrasi skema dijalankan sebelum web server; Docker Compose menjalankannya
+otomatis saat container platform mulai. Untuk HTTPS, set `COOKIE_SECURE=true`.
+
+Chart Helm untuk mode cluster ada di proyek saudara `../labk8stack-deploy/`.
+Chart tersebut memakai cluster dan Secret aplikasi CNPG yang sudah tersedia.
+
+Pengujian yang memakai database memerlukan database PostgreSQL khusus test:
+
+```bash
+TEST_DATABASE_URL=postgresql://k8slab:password@localhost:5432/k8slab_test make test
 ```
 
 ## Akun & leaderboard
@@ -108,7 +135,7 @@ DATABASE_URL=postgresql://k8slab:password@localhost:5432/k8slab \
 - Password disimpan sebagai hash **PBKDF2-HMAC-SHA256** (600.000 iterasi, salt
   acak per user), bukan teks biasa.
 - Tidak ada reset password lewat email. Bila password hilang, hapus user lewat
-  database (SQLite/PostgreSQL) atau minta admin membuatkan akun baru.
+  PostgreSQL atau minta admin membuatkan akun baru.
 - User lama dari versi "nama saja" tidak punya password. Pemiliknya bisa
   memakai **Create account** dengan username yang sama untuk mengklaim akun
   itu satu kali.
@@ -120,14 +147,33 @@ DATABASE_URL=postgresql://k8slab:password@localhost:5432/k8slab \
 | `fake` (default) | Output `kubectl` disimulasikan dari isi YAML | Tidak |
 | `kubernetes` | Menjalankan `kubectl apply` di namespace user | Ya |
 
-Di mode `kubernetes`, setiap user mendapat namespace **`lab-u<id>-<slug>`**. Platform
-membuat namespace itu, menerapkan manifest rusak, lalu memverifikasi hasilnya.
+Di mode `kubernetes`, setiap challenge aktif mendapat namespace
+**`lab-u<id>-<slug>`**. Namespace dibuat saat challenge dibuka dan dihapus
+setelah lulus atau kedaluwarsa. Retry saat attempt masih aktif membersihkan
+resource di namespace yang sama. Namespace challenge yang ditinggalkan akan
+kedaluwarsa setelah durasi challenge ditambah `LAB_SANDBOX_GRACE_MINUTES` (60
+menit secara default). `deploy/cleanup-cronjob.yaml` membersihkannya setiap 15
+menit pada instalasi Kubernetes. Instalasi di luar cluster menjalankan cleanup
+otomatis setiap 15 menit selama platform hidup. Untuk menjalankan secara manual:
+
+```bash
+# lihat rencana (dry-run, default)
+LAB_MODE=kubernetes LAB_KUBECONFIG=$HOME/.kube/config \
+  .venv/bin/python -m app.cleanup --idle-days 30
+
+# hapus namespace user yang idle + orphan
+LAB_MODE=kubernetes LAB_KUBECONFIG=$HOME/.kube/config \
+  .venv/bin/python -m app.cleanup --idle-days 30 --apply
+```
+
 Artinya ServiceAccount platform butuh izin membuat namespace dan resource di
 dalamnya — **jangan pakai cluster produksi**.
 
-> Status saat ini: mode `fake` sudah lengkap dan teruji. Mode `kubernetes`
-> sudah diimplementasikan tetapi belum diuji karena belum ada kubeconfig aktif
-> di mesin pengembangan.
+> Status: kedua engine teruji. Mode `kubernetes` sudah dijalankan di cluster
+> Talos (Kubernetes 1.36) dan 10 validator lulus lewat editor maupun terminal.
+> Tiga challenge (`readiness-probe`, `port-env`, `oom-killed`) baru menunjukkan
+> gejala aslinya jika `LAB_APP_IMAGE` memakai image `k8s-lab-app`, bukan image
+> HTTP generik.
 
 ## Challenge
 
@@ -154,6 +200,12 @@ fungsi `validate(doc)`, `simulate(doc)` untuk mode fake, plus `status` /
 
 ## Skor
 
+Di mode cluster, validator manifest harus lulus **dan** Deployment harus
+berhasil rollout atau Service harus memiliki endpoint Ready pada port aplikasi.
+Skor baru diberikan setelah kedua pemeriksaan berhasil. Mode fake memakai
+simulasi. Hint kedua muncul setelah separuh waktu challenge berlalu, dan
+penjelasan penyebab tersedia setelah lulus atau waktu habis.
+
 ```
 skor = poin × (0.5 + 0.5 × sisa_waktu/ durasi) − 10 × (percobaan − 1)
 minimum 20
@@ -168,7 +220,7 @@ lebih awal.
 ```
 app/
 ├── main.py          # route halaman + API (apply/verify/terminal/reset)
-├── db.py            # users, attempts, leaderboard (SQLite/PostgreSQL)
+├── db.py            # users, attempts, leaderboard (PostgreSQL)
 ├── challenges.py    # katalog challenge + validator + simulasi
 ├── sandbox.py       # state in-memory, dipakai editor & terminal
 ├── terminal.py      # interpreter perintah kubectl (mode fake)
@@ -181,7 +233,7 @@ app/
 └── static/          # CSS + JS (tanpa framework)
 deploy/rbac.yaml     # ServiceAccount + ClusterRole untuk mode cluster
 docs/real-cluster.md # panduan connect ke cluster asli
-tests/               # pytest (34 test)
+tests/               # pytest untuk API, engine, dan lifecycle
 ```
 
 ## Terminal
@@ -228,14 +280,13 @@ daftar aman ditolak.
 - Mode `kubernetes` memberi platform izin ke cluster. Isolasi per user ditegakkan
   RBAC + impersonation per namespace (lihat `docs/real-cluster.md`).
 - Terminal mode `fake` lengkap; mode `kubernetes` memakai kubectl asli.
-- Database: SQLite untuk lokal/test, PostgreSQL untuk Docker Compose dan
-  produksi. Keduanya didukung tanpa mengubah kode.
+- Database: PostgreSQL untuk lokal, test, Docker Compose, dan produksi.
 
 ## Roadmap
 
 1. Upgrade terminal ke PTY penuh (xterm.js + WebSocket + `kubectl exec`) agar
    bisa menjalankan shell interaktif, bukan hanya perintah satu baris.
-2. Verifikasi berbasis kondisi cluster (bukan hanya isi YAML).
+2. Pemeriksaan HTTP end-to-end untuk challenge Service, setelah endpoint Ready.
 3. Kubeconfig/token sementara per user untuk `kubectl` dari terminal sendiri.
-4. Reset otomatis namespace kedaluwarsa (cron/TTL).
+4. Metrik dan audit trail operasional per attempt.
 5. Leaderboard per-minggu kalender dan arsip musim.

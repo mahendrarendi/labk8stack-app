@@ -1,0 +1,88 @@
+# Set image and create secret k8s-lab-platform-config before applying.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-lab-platform
+  namespace: k8s-lab-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: k8s-lab-platform
+  template:
+    metadata:
+      labels:
+        app: k8s-lab-platform
+    spec:
+      serviceAccountName: lab-provisioner
+      containers:
+        - name: platform
+          image: ghcr.io/CHANGE_ME/k8s-lab-platform:0.2.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: LAB_MODE
+              value: kubernetes
+            - name: LAB_IMPERSONATE
+              value: "true"
+            - name: LAB_AUTO_CLEANUP
+              value: "false"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-lab-platform-config
+                  key: SECRET_KEY
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-lab-platform-config
+                  key: DATABASE_URL
+            - name: LAB_APP_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-lab-platform-config
+                  key: LAB_APP_IMAGE
+            - name: LAB_APP_GOOD_TAGS
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-lab-platform-config
+                  key: LAB_APP_GOOD_TAGS
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-lab-platform
+  namespace: k8s-lab-system
+spec:
+  selector:
+    app: k8s-lab-platform
+  ports:
+    - port: 80
+      targetPort: 8080

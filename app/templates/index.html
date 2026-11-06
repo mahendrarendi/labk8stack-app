@@ -1,60 +1,136 @@
 {% extends "base.html" %}
-{% block title %}{{ app_name }} — learn Kubernetes by fixing it{% endblock %}
+{% block title %}{{ app_name }} — practice Kubernetes troubleshooting{% endblock %}
 
 {% block content %}
-<section class="hero">
-  <p class="eyebrow">hands-on platform</p>
-  <h1>The cluster is broken.<br>Your job is to fix it.</h1>
-  <p class="lead">
-    Every challenge hands you a deliberately broken manifest. A Deployment
-    that never becomes ready, a Service that answers 503, a pod that never
-    leaves Pending. Nobody tells you why — investigate with the YAML editor or
-    with imperative <code>kubectl</code> commands in the built-in terminal,
-    before the clock runs out.
-  </p>
-
-  {% if error %}<p class="alert">{{ error }}</p>{% endif %}
-
-  <form method="post" action="/join" class="join">
-    <label for="name">Username</label>
-    <div class="row">
-      <input id="name" name="name" type="text" value="{{ name_value or '' }}"
-             placeholder="e.g. rendi" maxlength="40" autocomplete="username" required autofocus>
-    </div>
-    <label for="password" style="margin-top: 12px">Password</label>
-    <div class="row">
-      <input id="password" name="password" type="password"
-             placeholder="at least 6 characters" minlength="6" maxlength="128"
-             autocomplete="current-password" required>
-    </div>
-    <div class="row" style="margin-top: 14px">
-      <button class="btn primary" type="submit" name="intent" value="login">Sign in</button>
-      <button class="btn" type="submit" name="intent" value="register">Create account</button>
-    </div>
-    <p class="hint">
-      Sign in with the same username to keep your score on the leaderboard.
-      First time here? Choose <em>Create account</em>.
+<section class="landing-hero">
+  <div class="landing-intro">
+    <p class="landing-eyebrow"><span class="landing-live-dot"></span> Hands-on Kubernetes lab</p>
+    <h1>Every failure<br>is a <span>way forward.</span></h1>
+    <p class="landing-lead">
+      A Pod that will not start. A Service with no endpoints. A rollout that
+      never finishes. Investigate the symptoms, apply your fix, and learn how
+      Kubernetes behaves when things go wrong.
     </p>
-  </form>
+
+    <div class="landing-metrics" aria-label="Lab highlights">
+      <div><strong>10</strong><span>challenges</span></div>
+      <div><strong>{{ leaderboard_days }}D</strong><span>leaderboard</span></div>
+    </div>
+  </div>
+
+  <div class="landing-preview" aria-label="Example Kubernetes troubleshooting session">
+      <div class="landing-preview-bar">
+        <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
+      <div class="landing-preview-body" aria-hidden="true">
+        <div class="landing-preview-banner">
+          <strong>LABK8STACK</strong>
+          <span>Kubernetes troubleshooting console</span>
+        </div>
+        <div id="landing-preview-output" class="landing-preview-output">
+          <div><span class="preview-prompt">lab@labk8stack:~$</span> kubectl get pods</div>
+          <table class="landing-preview-table">
+            <thead><tr><th>NAME</th><th>READY</th><th>STATUS</th><th>RESTARTS</th><th>AGE</th></tr></thead>
+            <tbody><tr><td>web-7f9c-abc12</td><td>0/1</td><td class="preview-warning">ImagePullBackOff</td><td>0</td><td>4m</td></tr></tbody>
+          </table>
+        </div>
+        <div class="landing-preview-input"><span class="preview-prompt">lab@labk8stack:~$</span> <span id="landing-preview-typed"></span><span class="preview-cursor"></span></div>
+      </div>
+  </div>
+
+  <aside class="landing-auth" aria-label="Account access">
+    <div class="landing-auth-head">
+      <span class="landing-auth-mark" aria-hidden="true">&gt;_</span>
+      <span>LabK8stack / learner access</span>
+    </div>
+    <div class="landing-auth-tabs" role="tablist" aria-label="Account access">
+      <button id="auth-tab-login" type="button" role="tab" aria-controls="auth-panel-login"
+              aria-selected="{{ 'false' if auth_mode == 'register' else 'true' }}"
+              tabindex="{{ '-1' if auth_mode == 'register' else '0' }}" data-auth-tab="login">Sign in</button>
+      <button id="auth-tab-register" type="button" role="tab" aria-controls="auth-panel-register"
+              aria-selected="{{ 'true' if auth_mode == 'register' else 'false' }}"
+              tabindex="{{ '0' if auth_mode == 'register' else '-1' }}" data-auth-tab="register">Create account</button>
+    </div>
+
+    <section id="auth-panel-login" class="landing-auth-panel" role="tabpanel" aria-labelledby="auth-tab-login"
+             {% if auth_mode == 'register' %}hidden{% endif %}>
+      <h2>Welcome back.</h2>
+      <p class="landing-auth-copy">Sign in to continue your challenges and keep your progress.</p>
+      {% if error and auth_mode != 'register' %}<p class="alert" role="alert">{{ error }}</p>{% endif %}
+      <form method="post" action="/join" class="join landing-form">
+        <div class="landing-field">
+          <label for="login-name">Username</label>
+          <input id="login-name" name="name" type="text" value="{{ name_value if auth_mode != 'register' else '' }}"
+                 placeholder="Your username" minlength="2" maxlength="40" autocomplete="username" required
+                 {% if auth_mode != 'register' %}autofocus{% endif %}>
+        </div>
+        <div class="landing-field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password"
+                 placeholder="Your password" minlength="6" maxlength="128"
+                 autocomplete="current-password" required>
+        </div>
+        <div class="landing-auth-actions">
+          <button class="btn primary landing-submit" type="submit" name="intent" value="login">
+            Sign in <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section id="auth-panel-register" class="landing-auth-panel" role="tabpanel" aria-labelledby="auth-tab-register"
+             {% if auth_mode != 'register' %}hidden{% endif %}>
+      <h2>Create your account.</h2>
+      <p class="landing-auth-copy">Choose a username and password to save your lab progress.</p>
+      {% if error and auth_mode == 'register' %}<p class="alert" role="alert">{{ error }}</p>{% endif %}
+      <form method="post" action="/join" class="join landing-form">
+        <div class="landing-field">
+          <label for="register-name">Choose a username</label>
+          <input id="register-name" name="name" type="text" value="{{ name_value if auth_mode == 'register' else '' }}"
+                 placeholder="2–40 characters" minlength="2" maxlength="40" autocomplete="username" required
+                 {% if auth_mode == 'register' %}autofocus{% endif %}>
+        </div>
+        <div class="landing-field">
+          <label for="register-password">Create a password</label>
+          <input id="register-password" name="password" type="password"
+                 placeholder="At least 6 characters" minlength="6" maxlength="128"
+                 autocomplete="new-password" required>
+        </div>
+        <div class="landing-auth-actions">
+          <button class="btn primary landing-submit" type="submit" name="intent" value="register">
+            Create account <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </form>
+    </section>
+    <p class="landing-form-note">Your score and challenge progress stay with your account.</p>
+  </aside>
 </section>
 
-<section class="grid three">
-  <article class="panel">
-    <h2>1. Pick a challenge</h2>
-    <p>Ten real-world scenarios, from Easy to Hard.</p>
-  </article>
-  <article class="panel">
-    <h2>2. Fix it your way</h2>
-    <p>Edit YAML and <em>Apply</em>, or type <code>kubectl</code> commands in the terminal.</p>
-  </article>
-  <article class="panel">
-    <h2>3. Climb the board</h2>
-    <p>Faster fixes and fewer attempts score higher.</p>
-  </article>
+<section class="landing-journey" aria-labelledby="landing-journey-title">
+  <div class="landing-journey-head">
+    <div>
+      <p class="eyebrow">How it works</p>
+      <h2 id="landing-journey-title">Learn by doing the repair.</h2>
+    </div>
+    <a href="/leaderboard">Explore the leaderboard <span aria-hidden="true">↗</span></a>
+  </div>
+  <div class="landing-journey-grid">
+    <article class="landing-step">
+      <span class="landing-step-number">01</span>
+      <h3>Pick an incident</h3>
+      <p>Choose a broken workload and investigate the clues in its sandbox.</p>
+    </article>
+    <article class="landing-step">
+      <span class="landing-step-number">02</span>
+      <h3>Make the fix</h3>
+      <p>Use the manifest editor or the terminal to repair the underlying issue.</p>
+    </article>
+    <article class="landing-step">
+      <span class="landing-step-number">03</span>
+      <h3>Verify and improve</h3>
+      <p>Confirm the workload is healthy and see how your time affects your score.</p>
+    </article>
+  </div>
 </section>
-
-<p class="center muted">
-  The leaderboard covers the last {{ leaderboard_days }} days.
-  <a href="/leaderboard">See the ranking →</a>
-</p>
 {% endblock %}

@@ -13,7 +13,7 @@ help:
 	@echo "make serve  - server tanpa reload, listen 0.0.0.0"
 	@echo "make up     - Docker Compose (build + jalan)"
 	@echo "make down   - hentikan Compose"
-	@echo "make clean  - hapus venv, cache, database lokal"
+	@echo "make clean  - hapus venv dan cache lokal"
 
 setup:
 	python3 -m venv $(VENV)
@@ -21,12 +21,15 @@ setup:
 	$(PIP) install -r requirements.txt -r requirements-dev.txt
 
 test:
+	@test -n "$$TEST_DATABASE_URL" || { echo "Set TEST_DATABASE_URL to a PostgreSQL test database"; exit 1; }
 	$(PY) -m pytest -q
 
 run:
+	$(PY) -m app.migrate
 	$(PY) -m uvicorn app.main:app --reload --port $(PORT)
 
 serve:
+	$(PY) -m app.migrate
 	$(PY) -m uvicorn app.main:app --host 0.0.0.0 --port $(PORT)
 
 up:
@@ -39,5 +42,5 @@ logs:
 	$(COMPOSE) logs -f --tail=80
 
 clean:
-	rm -rf $(VENV) .pytest_cache data
+	rm -rf $(VENV) .pytest_cache
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +

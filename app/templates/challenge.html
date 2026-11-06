@@ -4,8 +4,13 @@
 {% block content %}
 <div class="challenge"
      data-challenge="{{ challenge.slug }}"
+     data-attempt-id="{{ attempt.id if attempt else '' }}"
      data-remaining="{{ remaining }}"
      data-active="{{ 'true' if attempt and attempt.status == 'active' else 'false' }}">
+
+  {% if setup_error %}
+    <div class="banner danger"><strong>Sandbox setup failed.</strong> {{ setup_error }}</div>
+  {% endif %}
 
   <div class="pagehead">
     <div>
@@ -17,13 +22,16 @@
         <span class="pill">{{ challenge.duration_seconds // 60 }} min</span>
       </div>
     </div>
-    {% if attempt and attempt.status == 'active' %}
-      <div class="timer" id="timer" aria-live="polite">--:--</div>
-    {% elif passed_attempt %}
-      <div class="timer done">SOLVED</div>
-    {% else %}
-      <div class="timer expired">EXPIRED</div>
-    {% endif %}
+    <div class="challenge-controls">
+      {% if attempt and attempt.status == 'active' %}
+        <button class="btn ghost reset-lab" id="btn-reset" type="button">Reset Lab</button>
+        <div class="timer" id="timer" aria-live="polite">--:--</div>
+      {% elif passed_attempt %}
+        <div class="timer done">SOLVED</div>
+      {% else %}
+        <div class="timer expired">EXPIRED</div>
+      {% endif %}
+    </div>
   </div>
 
   {% if passed_attempt %}
@@ -56,11 +64,25 @@
         <summary>How to investigate</summary>
         <p>{{ challenge.hint }}</p>
       </details>
+      {% if advanced_hint and attempt and attempt.status == 'active' %}
+      <details class="hint" id="advanced-hint"
+               data-unlock-at="{{ challenge.duration_seconds // 2 }}">
+        <summary>Need another hint? Unlocks halfway through.</summary>
+        <p>{{ advanced_hint }}</p>
+      </details>
+      {% endif %}
+      {% if passed_attempt or (attempt and attempt.status == 'expired') %}
+      <details class="hint">
+        <summary>What was wrong?</summary>
+        <p>{{ advanced_hint }}</p>
+        <p>Compare your final manifest with the initial YAML and inspect the resource status.</p>
+      </details>
+      {% endif %}
       <p class="hint">No causes are given here — diagnosing it is the exercise.</p>
 
       <h3>How it works</h3>
       <ol class="steps">
-        <li>Fix the YAML in the editor <em>or</em> type <code>kubectl</code> commands in the terminal.</li>
+        <li>Fix the YAML and click <strong>Apply</strong>, <em>or</em> run a <code>kubectl</code> command with Enter.</li>
         <li>Inspect the result — pod status, endpoints, events.</li>
         <li>Hit <strong>Verify</strong> when you think it is fixed.</li>
       </ol>
@@ -76,14 +98,13 @@
       <div class="pane is-active" id="pane-editor" data-pane="editor">
         <div class="editor-head">
           <span>manifest.yaml</span>
-          <span class="muted">yaml</span>
+          <span id="editor-state" class="editor-state">Not applied</span>
         </div>
-        <textarea id="editor" spellcheck="false" {% if passed_attempt %}readonly{% endif %}>{{ editor_value }}</textarea>
+        <textarea id="editor" spellcheck="false" {% if not attempt or attempt.status != 'active' %}readonly{% endif %}>{{ editor_value }}</textarea>
 
         <div class="actions">
-          <button class="btn primary" id="btn-apply" type="button" {% if passed_attempt %}disabled{% endif %}>Apply</button>
-          <button class="btn" id="btn-verify" type="button" {% if passed_attempt %}disabled{% endif %}>Verify</button>
-          <button class="btn ghost" id="btn-reset" type="button" {% if passed_attempt %}disabled{% endif %}>Reset sandbox</button>
+          <button class="btn primary" id="btn-apply" type="button" {% if not attempt or attempt.status != 'active' %}disabled{% endif %}>Apply</button>
+          <button class="btn" id="btn-verify" type="button" {% if not attempt or attempt.status != 'active' %}disabled{% endif %}>Verify</button>
         </div>
 
         <div class="console-head">output</div>
@@ -91,24 +112,37 @@
       </div>
 
       <div class="pane" id="pane-terminal" data-pane="terminal">
-        <pre id="term-out" class="console term-out">K8s Lab terminal — simulated kubectl.
-Type 'help' for the command list, or try: kubectl get pods</pre>
-        <form id="term-form" class="term-line" autocomplete="off">
-          <span class="prompt">$</span>
-          <input id="term-input" type="text" spellcheck="false"
-                 placeholder="kubectl get pods"
-                 {% if passed_attempt %}disabled{% endif %}>
-        </form>
+        <div class="terminal-window" id="terminal-window">
+          <div class="terminal-titlebar">
+            <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="terminal-title">LabK8stack — challenge terminal</span>
+            <button class="terminal-clear" id="term-clear" type="button" title="Clear terminal output (Ctrl+L)">Clear</button>
+          </div>
+          <div class="terminal-screen" id="terminal-screen">
+            <div class="terminal-banner" id="term-banner">
+              <strong>LABK8STACK</strong>
+              <span>Kubernetes troubleshooting console</span>
+              <span>Challenge: {{ challenge.title }}</span>
+              <span>Type <b>help</b> for commands. Try <b>kubectl get pods</b>.</span>
+            </div>
+            <div id="term-out" class="terminal-history" role="log" aria-live="polite" aria-label="Terminal output"></div>
+            <form id="term-form" class="term-line" autocomplete="off">
+              <label class="prompt" for="term-input">lab@labk8stack:~$</label>
+              <input id="term-input" type="text" spellcheck="false"
+                     autocapitalize="off" autocorrect="off" aria-label="Terminal command"
+                     {% if not attempt or attempt.status != 'active' %}disabled{% endif %}>
+            </form>
+          </div>
+          <div class="terminal-statusbar">
+            <span>kubectl console</span>
+            <span>↑ ↓ history &nbsp;·&nbsp; Ctrl+L clear</span>
+          </div>
+        </div>
         <div class="actions">
-          <button class="btn" id="btn-term-verify" type="button" {% if passed_attempt %}disabled{% endif %}>Verify</button>
-          <button class="btn ghost" id="btn-term-reset" type="button" {% if passed_attempt %}disabled{% endif %}>Reset sandbox</button>
+          <button class="btn" id="btn-term-verify" type="button" {% if not attempt or attempt.status != 'active' %}disabled{% endif %}>Verify</button>
         </div>
       </div>
     </section>
   </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script src="/static/app.js"></script>
 {% endblock %}

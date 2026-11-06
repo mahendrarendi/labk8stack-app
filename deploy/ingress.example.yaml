@@ -1,0 +1,21 @@
+# Edit host and TLS secret before applying. An ingress controller is required.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: k8s-lab-platform
+  namespace: k8s-lab-system
+spec:
+  tls:
+    - hosts: [lab.example.com]
+      secretName: k8s-lab-platform-tls
+  rules:
+    - host: lab.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: k8s-lab-platform
+                port:
+                  number: 80

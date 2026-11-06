@@ -16,16 +16,14 @@ load_dotenv(os.environ.get("LAB_ENV_FILE", str(BASE_DIR / ".env")), override=Fal
 
 
 class Settings:
-    app_name: str = "K8s Lab"
+    app_name: str = "LabK8stack"
     tagline: str = "Belajar Kubernetes dengan memperbaiki cluster yang rusak"
 
     # WAJIB diganti di produksi. Dipakai untuk menandatangani cookie sesi.
     secret_key: str = os.environ.get("SECRET_KEY", "dev-insecure-change-me")
 
-    db_path: Path = Path(os.environ.get("DB_PATH", str(BASE_DIR / "data" / "lab.db")))
-
-    # Kosong = SQLite (db_path). Isi dengan URL PostgreSQL untuk produksi:
-    # postgresql://user:password@host:5432/database
+    # Wajib diisi untuk menjalankan aplikasi tanpa Docker Compose. Compose
+    # menyusun URL ini dari POSTGRES_DB, POSTGRES_USER, dan POSTGRES_PASSWORD.
     database_url: str = os.environ.get("DATABASE_URL", "").strip()
 
     # fake        -> simulator, tidak butuh cluster (default, aman untuk demo)
@@ -33,7 +31,16 @@ class Settings:
     mode: str = os.environ.get("LAB_MODE", "fake").lower()
 
     session_max_age: int = int(os.environ.get("SESSION_MAX_AGE", str(60 * 60 * 24 * 7)))
+    cookie_secure: bool = os.environ.get("COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
     leaderboard_days: int = int(os.environ.get("LEADERBOARD_DAYS", "7"))
+
+    # Default untuk `python -m app.cleanup`: hapus namespace sandbox user yang
+    # sudah tidak aktif selama N hari.
+    sandbox_idle_days: int = int(os.environ.get("LAB_SANDBOX_IDLE_DAYS", "30"))
+    sandbox_grace_minutes: int = int(os.environ.get("LAB_SANDBOX_GRACE_MINUTES", "60"))
+    auto_cleanup: bool = os.environ.get("LAB_AUTO_CLEANUP", "true").lower() in {
+        "1", "true", "yes",
+    }
 
     # Namespace setiap user di mode kubernetes: lab-u<id>-<slug>
     namespace_prefix: str = os.environ.get("LAB_NAMESPACE_PREFIX", "lab-u")
@@ -42,8 +49,8 @@ class Settings:
     # atau in-cluster ServiceAccount bila platform berjalan sebagai Pod).
     kubeconfig: str = os.environ.get("LAB_KUBECONFIG", "")
 
-    # Jalankan perintah user sebagai ServiceAccount per-namespace
-    # (system:serviceaccount:lab-u<id>-<slug>:lab-runner) alih-alih identitas platform.
+    # Jalankan perintah user sebagai ServiceAccount per-namespace.
+    # Mode kubernetes menolak nilai false.
     impersonate: bool = os.environ.get("LAB_IMPERSONATE", "true").lower() not in {
         "0",
         "false",

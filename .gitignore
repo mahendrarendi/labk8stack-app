@@ -5,10 +5,6 @@ venv/
 .env
 .env.*
 !.env.example
-data/
-*.db
-*.db-wal
-*.db-shm
 .pytest_cache/
 .coverage
 htmlcov/

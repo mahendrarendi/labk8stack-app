@@ -10,17 +10,7 @@ from __future__ import annotations
 
 ALLOWED_KINDS = {
     "Deployment",
-    "ReplicaSet",
-    "StatefulSet",
-    "DaemonSet",
     "Service",
-    "ConfigMap",
-    "Secret",
-    "Ingress",
-    "PersistentVolumeClaim",
-    "Job",
-    "CronJob",
-    "HorizontalPodAutoscaler",
 }
 
 # Keys that are never acceptable in a lab manifest.

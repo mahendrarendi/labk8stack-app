@@ -30,3 +30,10 @@ class FakeEngine(Engine):
     def terminal(self, user_id: int, challenge: Challenge, command: str) -> str:
         sandbox = get_sandbox(user_id, challenge)
         return execute(sandbox, challenge, command)
+
+    def check(self, user_id: int, challenge: Challenge) -> tuple[bool, str]:
+        return True, "Simulated workload is healthy."
+
+    def release(self, user_id: int, challenge: Challenge) -> ApplyResult:
+        reset_sandbox(user_id, challenge)
+        return ApplyResult(ok=True, output="Sandbox released.")
