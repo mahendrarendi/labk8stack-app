@@ -118,7 +118,7 @@ DATABASE_URL=postgresql://k8slab:password@localhost:5432/k8slab \
 Migrasi skema dijalankan sebelum web server; Docker Compose menjalankannya
 otomatis saat container platform mulai. Untuk HTTPS, set `COOKIE_SECURE=true`.
 
-Chart Helm untuk mode cluster ada di proyek saudara `../labk8stack-deploy/`.
+Chart Helm untuk mode cluster ada di proyek saudara `../k8s-lab-deploy/`.
 Chart tersebut memakai cluster dan Secret aplikasi CNPG yang sudah tersedia.
 
 Pengujian yang memakai database memerlukan database PostgreSQL khusus test:
