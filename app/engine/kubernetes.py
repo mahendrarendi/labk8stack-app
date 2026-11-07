@@ -170,7 +170,7 @@ class KubernetesEngine(Engine):
             return None
         return (document.get("status") or {}).get("phase")
 
-    def _ensure_namespace(self, namespace: str) -> ApplyResult | None:
+    def _ensure_namespace(self, namespace: str, duration_seconds: int) -> ApplyResult | None:
         """Create the namespace and its runner identity if they are missing."""
         phase = self._namespace_phase(namespace)
         if phase == "Terminating":
@@ -209,7 +209,7 @@ class KubernetesEngine(Engine):
         if not secured.ok:
             return secured
         expiry = datetime.now(timezone.utc) + timedelta(
-            seconds=challenge.duration_seconds,
+            seconds=duration_seconds,
             minutes=settings.sandbox_grace_minutes,
         )
         annotated = self._run([
@@ -270,7 +270,7 @@ class KubernetesEngine(Engine):
 
     def reset(self, user_id: int, challenge: Challenge) -> ApplyResult:
         namespace = self._namespace(user_id, challenge)
-        provisioned = self._ensure_namespace(namespace)
+        provisioned = self._ensure_namespace(namespace, challenge.duration_seconds)
         if provisioned is not None:
             return provisioned
 

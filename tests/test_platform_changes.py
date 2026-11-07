@@ -10,6 +10,7 @@ import yaml
 from app import cleanup
 from app import db
 from app.challenges import CHALLENGES
+from app.config import settings
 from app.engine import ApplyResult
 from app.engine.kubernetes import KubernetesEngine, _PROVISIONING
 
@@ -74,11 +75,42 @@ def test_deployment_check_waits_for_rollout(monkeypatch):
 def test_intentionally_invalid_deployment_still_starts_challenge(monkeypatch):
     monkeypatch.setattr("app.engine.kubernetes.which", lambda _: "/usr/bin/kubectl")
     engine = KubernetesEngine()
-    monkeypatch.setattr(engine, "_ensure_namespace", lambda _: None)
+    monkeypatch.setattr(engine, "_ensure_namespace", lambda *_: None)
     monkeypatch.setattr(engine, "_clean", lambda _: ApplyResult(True, "clean"))
     monkeypatch.setattr(engine, "_run", lambda *args, **kwargs: ApplyResult(False, "invalid selector"))
     result = engine.reset(1, CHALLENGES["deployment-selector"])
     assert result.ok is True
+
+
+def test_start_provisions_namespace_with_challenge_expiry(monkeypatch):
+    monkeypatch.setattr("app.engine.kubernetes.which", lambda _: "/usr/bin/kubectl")
+    engine = KubernetesEngine()
+    commands = []
+
+    def run(args, **kwargs):
+        commands.append((args, kwargs))
+        if args[:3] == ["kubectl", "get", "namespace"]:
+            return ApplyResult(False, "NotFound")
+        return ApplyResult(True, "ok")
+
+    monkeypatch.setattr(engine, "_run", run)
+    challenge = CHALLENGES["image-pull-backoff"]
+    before = datetime.now(timezone.utc)
+    result = engine.reset(1, challenge)
+    after = datetime.now(timezone.utc)
+
+    assert result.ok is True
+    annotation = next(
+        item for args, _ in commands if args[1:3] == ["annotate", "namespace"]
+        for item in args if item.startswith("k8s-lab.io/expires-at=")
+    )
+    expiry = datetime.fromisoformat(annotation.split("=", 1)[1])
+    duration = timedelta(
+        seconds=challenge.duration_seconds,
+        minutes=settings.sandbox_grace_minutes,
+    )
+    assert before + duration - timedelta(seconds=1) <= expiry <= after + duration
+    assert any(args[1:3] == ["apply", "-f"] for args, _ in commands)
 
 
 def test_terminal_cannot_load_unchecked_manifest(monkeypatch):
