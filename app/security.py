@@ -1,4 +1,4 @@
-"""Cookie sesi bertanda tangan dan hashing password."""
+"""Signed session cookies and password hashing."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .config import settings
 COOKIE_NAME = "lab_session"
 _serializer = URLSafeTimedSerializer(settings.secret_key, salt="k8s-lab-session")
 
-# PBKDF2-HMAC-SHA256 dengan salt acak per user. Tidak butuh dependency baru.
+# PBKDF2-HMAC-SHA256 with a random salt per user. No extra dependency needed.
 _PASSWORD_ALGORITHM = "pbkdf2_sha256"
 _PASSWORD_ITERATIONS = 600_000
 

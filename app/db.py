@@ -1,4 +1,4 @@
-"""Akses PostgreSQL untuk akun, attempt, dan leaderboard."""
+"""PostgreSQL access for accounts, attempts, and the leaderboard."""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ _SCHEMA = [
         last_seen     TEXT
     )
     """,
-    # Database lama dibuat sebelum ada pencatatan aktivitas.
+    # Older databases predate activity tracking.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TEXT",
-    # Username tidak membedakan huruf besar dan kecil.
+    # Usernames are case insensitive.
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_name_lower ON users (LOWER(name))",
     """
     CREATE TABLE IF NOT EXISTS attempts (
@@ -74,7 +74,7 @@ def get_db() -> Iterator[Any]:
 
 
 def init_db() -> None:
-    # PostgreSQL mungkin belum siap saat container platform start lebih dulu.
+    # PostgreSQL may not be ready when the platform container starts.
     delay = 1.0
     for attempt in range(10):
         try:
@@ -136,10 +136,9 @@ def get_user(user_id: int) -> Any | None:
 
 
 def touch_user(user_id: int, min_interval_seconds: int = 300) -> None:
-    """Catat aktivitas terakhir, tapi jangan menulis di setiap request.
+    """Record activity without writing on every request.
 
-    ``last_seen`` dipakai oleh ``app.cleanup`` untuk menentukan sandbox mana
-    yang sudah boleh dihapus.
+    ``app.cleanup`` uses ``last_seen`` to select sandboxes for deletion.
     """
     now = utcnow()
     with get_db() as db:
@@ -160,10 +159,10 @@ def all_users() -> list[Any]:
 
 
 def idle_users(days: int) -> list[Any]:
-    """User yang aktivitas terakhirnya lebih lama dari ``days`` hari.
+    """Users whose last activity was more than ``days`` days ago.
 
-    Baris lama mungkin belum punya ``last_seen``; pakai attempt terakhir atau
-    ``created_at`` sebagai gantinya.
+    Older rows may have no ``last_seen`` value. Fall back to the latest
+    attempt or ``created_at``.
     """
     cutoff = iso(utcnow() - timedelta(days=days))
     with get_db() as db:
@@ -255,7 +254,7 @@ def finish_attempt(attempt_id: int, status: str, score: int) -> None:
 
 
 def attempts_for_user(user_id: int) -> dict[str, Any]:
-    """Attempt terbaru per challenge, dipakai di dashboard."""
+    """Latest attempt for each challenge, used by the dashboard."""
     with get_db() as db:
         rows = db.execute(
             """SELECT a.* FROM attempts a
@@ -282,7 +281,7 @@ def completed_sandboxes() -> set[tuple[int, str]]:
 # ---------------------------------------------------------- leaderboard
 
 def leaderboard(days: int) -> list[Any]:
-    """Peringkat dihitung dari attempt 'passed' dalam N hari terakhir."""
+    """Rank users by passed attempts within the last N days."""
     since = iso(utcnow() - timedelta(days=days))
     with get_db() as db:
         return db.execute(

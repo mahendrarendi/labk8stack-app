@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
-# kubectl hanya dibutuhkan untuk LAB_MODE=kubernetes.
+# kubectl is required only for LAB_MODE=kubernetes.
 ARG KUBECTL_VERSION=v1.36.0
 ARG TARGETARCH=amd64
 RUN apk add --no-cache ca-certificates curl \

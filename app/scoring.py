@@ -1,4 +1,4 @@
-"""Perhitungan skor: makin cepat dan makin sedikit percobaan, makin besar."""
+"""Score faster solutions with fewer attempts more highly."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ TRY_PENALTY = 10
 
 
 def compute_score(points: int, duration: int, elapsed: float, tries: int) -> int:
-    """Skor 50%-100% dari poin, dikurangi penalti tiap percobaan tambahan."""
+    """Award 50%-100% of points, minus a penalty for each extra attempt."""
     if duration <= 0:
         return MIN_SCORE
     ratio_left = max(0.0, 1.0 - (elapsed / duration))

@@ -178,7 +178,7 @@ def join(
             if user is None:
                 return auth_error("That username was just taken. Pick another one.")
         else:
-            # Akun lama (dibuat sebelum password wajib) diklaim sekali di sini.
+            # Claim a legacy account created before passwords were required.
             db.set_password(user["id"], hash_password(password))
             user = db.get_user(user["id"])
     else:

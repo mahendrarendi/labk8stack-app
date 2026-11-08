@@ -7,13 +7,13 @@ COMPOSE?= docker compose
 .PHONY: help setup test run serve up down logs clean
 
 help:
-	@echo "make setup  - buat .venv + install dependensi"
-	@echo "make test   - jalankan pytest"
-	@echo "make run    - server dev dengan reload (port $(PORT))"
-	@echo "make serve  - server tanpa reload, listen 0.0.0.0"
-	@echo "make up     - Docker Compose (build + jalan)"
-	@echo "make down   - hentikan Compose"
-	@echo "make clean  - hapus venv dan cache lokal"
+	@echo "make setup  - create .venv and install dependencies"
+	@echo "make test   - run pytest"
+	@echo "make run    - development server with reload (port $(PORT))"
+	@echo "make serve  - server without reload, listening on 0.0.0.0"
+	@echo "make up     - build and start Docker Compose services"
+	@echo "make down   - stop Docker Compose services"
+	@echo "make clean  - remove the virtual environment and local caches"
 
 setup:
 	python3 -m venv $(VENV)

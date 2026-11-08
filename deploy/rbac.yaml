@@ -1,13 +1,12 @@
-# RBAC untuk mode LAB_MODE=kubernetes.
+# RBAC for LAB_MODE=kubernetes.
 #
 #   kubectl apply -f deploy/rbac.yaml
 #
 # Model:
-#   - Platform memakai identitas "lab-provisioner" (atau kubeconfig admin saat
-#     dijalankan di luar cluster) untuk membuat/menghapus namespace.
-#   - Di setiap namespace lab-u<id>-<slug> dibuat ServiceAccount "lab-runner" yang
-#     di-bind ke ClusterRole "lab-user" (hanya resource di namespace itu).
-#   - Semua perintah user dijalankan dengan
+#   - The platform uses the "lab-provisioner" identity to manage namespaces.
+#   - Each lab namespace gets a "lab-runner" ServiceAccount bound to the
+#     "lab-user" ClusterRole through a namespaced RoleBinding.
+#   - Learner commands use
 #     --as=system:serviceaccount:lab-u<id>-<slug>:lab-runner
 ---
 apiVersion: v1
@@ -24,8 +23,8 @@ metadata:
   name: lab-provisioner
   namespace: k8s-lab-system
 ---
-# Hak yang dimiliki setiap peserta, dibatasi oleh RoleBinding di namespace-nya.
-# Tidak ada akses ke node, namespace lain, RBAC, CRD, atau exec ke pod.
+# Runner permissions are scoped by the RoleBinding in each namespace.
+# No access to nodes, other namespaces, RBAC, CRDs, or Pod exec.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -50,8 +49,8 @@ rules:
     resources: ["replicasets"]
     verbs: ["get", "list", "watch"]
 ---
-# Identitas platform: hanya boleh mengelola namespace lab dan me-rebind
-# ServiceAccount peserta. Tidak bisa membaca Secret aplikasi user.
+# The platform identity manages lab namespaces and runner RoleBindings.
+# It cannot read application Secrets in learner namespaces.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -69,12 +68,12 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Wajib agar RoleBinding ke ClusterRole lab-user diizinkan.
+  # Required to bind the lab-user ClusterRole through a RoleBinding.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
     resourceNames: ["lab-user"]
     verbs: ["bind"]
-  # Batasi impersonation ke ServiceAccount lab-runner saja.
+  # Restrict impersonation to the lab-runner ServiceAccount.
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames: ["lab-runner"]
